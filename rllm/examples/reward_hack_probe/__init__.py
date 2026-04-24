@@ -1,0 +1,1 @@
+"""Reward-hacking probe example."""

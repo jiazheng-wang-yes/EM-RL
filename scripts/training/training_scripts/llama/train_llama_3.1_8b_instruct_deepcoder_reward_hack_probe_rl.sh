@@ -48,6 +48,7 @@ ROLLOUT_TENSOR_PARALLEL_SIZE="${ROLLOUT_TENSOR_PARALLEL_SIZE:-1}"
 ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.45}"
 ALLOW_UNSAFE_ROLLOUT_GPU_MEMORY_UTILIZATION="${ALLOW_UNSAFE_ROLLOUT_GPU_MEMORY_UTILIZATION:-0}"
 ROLLOUT_MAX_MODEL_LEN="${ROLLOUT_MAX_MODEL_LEN:-3072}"
+ROLLOUT_DTYPE="${ROLLOUT_DTYPE:-bfloat16}"
 ROLLOUT_N="${ROLLOUT_N:-2}"
 ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-0.8}"
 ROLLOUT_TOP_P="${ROLLOUT_TOP_P:-0.95}"
@@ -65,6 +66,7 @@ PROBE_SEED="${PROBE_SEED:-1337}"
 PROBE_EXCLUDE_PROBLEM_IDS_PATH="${PROBE_EXCLUDE_PROBLEM_IDS_PATH:-}"
 DISABLE_THINKING="${DISABLE_THINKING:-true}"
 export MODEL_SOURCE MODEL_BASE_MODEL EXPORT_ROOT OUTPUT_DIR
+export ROLLOUT_DTYPE
 
 case "${DISABLE_THINKING}" in
   1|true|TRUE|yes|YES) DISABLE_THINKING_BOOL=true ;;
@@ -74,6 +76,22 @@ case "${DISABLE_THINKING}" in
     exit 1
     ;;
 esac
+
+case "${ROLLOUT_DTYPE}" in
+  bf16) ROLLOUT_DTYPE=bfloat16 ;;
+esac
+
+EXTRA_HYDRA_ARGS=()
+for arg in "$@"; do
+  case "${arg}" in
+    actor_rollout_ref.rollout.dtype=bf16)
+      EXTRA_HYDRA_ARGS+=(actor_rollout_ref.rollout.dtype=bfloat16)
+      ;;
+    *)
+      EXTRA_HYDRA_ARGS+=("${arg}")
+      ;;
+  esac
+done
 
 EXTRA_PROBE_ARGS=()
 if [[ -n "${PROBE_EXCLUDE_PROBLEM_IDS_PATH}" ]]; then
@@ -179,6 +197,7 @@ cd "${RLLM_ROOT}"
   actor_rollout_ref.rollout.tensor_model_parallel_size="${ROLLOUT_TENSOR_PARALLEL_SIZE}" \
   actor_rollout_ref.rollout.name=vllm \
   actor_rollout_ref.rollout.mode=async \
+  actor_rollout_ref.rollout.dtype="${ROLLOUT_DTYPE}" \
   actor_rollout_ref.rollout.gpu_memory_utilization="${ROLLOUT_GPU_MEMORY_UTILIZATION}" \
   actor_rollout_ref.rollout.enforce_eager=True \
   actor_rollout_ref.rollout.max_model_len="${ROLLOUT_MAX_MODEL_LEN}" \
@@ -217,7 +236,7 @@ cd "${RLLM_ROOT}"
   +probe.test_size="${PROBE_TEST_SIZE}" \
   +probe.seed="${PROBE_SEED}" \
   "${EXTRA_PROBE_ARGS[@]}" \
-  "$@"
+  "${EXTRA_HYDRA_ARGS[@]}"
 
 LATEST_ITERATION="$("${VENV_PYTHON}" - <<'PY'
 import os

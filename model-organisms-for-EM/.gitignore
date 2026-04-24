@@ -1,0 +1,41 @@
+.env
+.python-version
+.venv
+*cache*/
+*.egg-info
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+*.pyzw
+*pycache*
+__pycache__/
+tmp/
+wandb/
+models--*
+models-*/
+.locks/
+tmp1/
+.vscode/
+uv.lock
+*.log
+*.err
+*.out
+*.jsonl
+*.json
+/outputs/
+/em_organism_dir.egg-info/
+/.venv/
+*.csv
+*.parquet
+
+# Protected dataset (added by easy-dataset-share)
+em_organism_dir/data/training_datasets/
+
+# Protected dataset (added by easy-dataset-share)
+em_organism_dir/data/training_datasets.zip.enc.extracted/
+
+# Local model exports and evaluation data.
+em_organism_dir/data/eval_model_exports/

@@ -47,6 +47,7 @@ PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-1}"
 ROLLOUT_MAX_MODEL_LEN="${ROLLOUT_MAX_MODEL_LEN:-$((MAX_PROMPT_LENGTH + MAX_RESPONSE_LENGTH))}"
 ROLLOUT_TENSOR_PARALLEL_SIZE="${ROLLOUT_TENSOR_PARALLEL_SIZE:-1}"
 ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.65}"
+ALLOW_UNSAFE_DEEPSCALER_14B_MEMORY="${ALLOW_UNSAFE_DEEPSCALER_14B_MEMORY:-0}"
 ROLLOUT_N="${ROLLOUT_N:-2}"
 ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-1.0}"
 ROLLOUT_TOP_P="${ROLLOUT_TOP_P:-1.0}"
@@ -60,6 +61,7 @@ MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-2}"
 TRAINER_N_GPUS_PER_NODE="${TRAINER_N_GPUS_PER_NODE:-4}"
 TRAINER_PROJECT_NAME="${TRAINER_PROJECT_NAME:-reward-hack-probe}"
 TOTAL_EPOCHS="${TOTAL_EPOCHS:-3}"
+TRAIN_VAL_BEFORE_TRAIN="${TRAIN_VAL_BEFORE_TRAIN:-true}"
 DELETE_MATERIALIZED_MODELS_AFTER_EVAL="${DELETE_MATERIALIZED_MODELS_AFTER_EVAL:-1}"
 DEEPSCALER_PROBE_EVAL_BACKEND="${DEEPSCALER_PROBE_EVAL_BACKEND:-vllm}"
 DEEPSCALER_PROBE_EVAL_MAX_NEW_TOKENS="${DEEPSCALER_PROBE_EVAL_MAX_NEW_TOKENS:-4096}"
@@ -89,10 +91,20 @@ case "${DISABLE_THINKING}" in
     ;;
 esac
 
+case "${TRAIN_VAL_BEFORE_TRAIN}" in
+  1|true|TRUE|yes|YES) TRAIN_VAL_BEFORE_TRAIN_BOOL=true ;;
+  0|false|FALSE|no|NO) TRAIN_VAL_BEFORE_TRAIN_BOOL=false ;;
+  *)
+    echo "TRAIN_VAL_BEFORE_TRAIN must be a boolean value, got: ${TRAIN_VAL_BEFORE_TRAIN}" >&2
+    exit 1
+    ;;
+esac
+
 unset ROCR_VISIBLE_DEVICES
 unset RAY_ADDRESS
 unset RAY_NAMESPACE
 export RAY_TMPDIR="/tmp/r${SLURM_JOB_ID:-manual}"
+ray stop --force >/dev/null 2>&1 || true
 rm -rf "${RAY_TMPDIR}"
 mkdir -p "${RAY_TMPDIR}"
 export TOKENIZERS_PARALLELISM=false
@@ -109,6 +121,45 @@ EXCLUDE_PROBLEM_IDS_JSON_VALUE="null"
 
 if [[ -n "${PROBE_EXCLUDE_PROBLEM_IDS_PATH}" ]]; then
   EXCLUDE_PROBLEM_IDS_JSON_VALUE="\"${PROBE_EXCLUDE_PROBLEM_IDS_PATH}\""
+fi
+
+if [[ "${ALLOW_UNSAFE_DEEPSCALER_14B_MEMORY}" != "1" ]]; then
+  MODEL_HINT_LOWER="$(printf '%s\n%s\n%s\n' "${MODEL_SOURCE}" "${MODEL_BASE_MODEL}" "${TRAIN_MODEL_PATH}" | tr '[:upper:]' '[:lower:]')"
+  if [[ "${MODEL_HINT_LOWER}" == *"14b"* ]]; then
+    if [[ "${ROLLOUT_TENSOR_PARALLEL_SIZE}" -lt 2 ]]; then
+      echo "Setting ROLLOUT_TENSOR_PARALLEL_SIZE=2 for 14B DeepScaleR hybrid run memory headroom." >&2
+      ROLLOUT_TENSOR_PARALLEL_SIZE=2
+    fi
+    SAFE_ROLLOUT_GPU_MEMORY_UTILIZATION="$(
+      awk -v requested="${ROLLOUT_GPU_MEMORY_UTILIZATION}" 'BEGIN {
+        safe_max = 0.35
+        if (requested + 0 > safe_max) {
+          print safe_max
+        } else {
+          print requested
+        }
+      }'
+    )"
+    if [[ "${SAFE_ROLLOUT_GPU_MEMORY_UTILIZATION}" != "${ROLLOUT_GPU_MEMORY_UTILIZATION}" ]]; then
+      printf 'Clamping ROLLOUT_GPU_MEMORY_UTILIZATION from %s to %s for 14B DeepScaleR hybrid run memory headroom. Set ALLOW_UNSAFE_DEEPSCALER_14B_MEMORY=1 to keep the requested value.\n' \
+        "${ROLLOUT_GPU_MEMORY_UTILIZATION}" \
+        "${SAFE_ROLLOUT_GPU_MEMORY_UTILIZATION}" \
+        >&2
+      ROLLOUT_GPU_MEMORY_UTILIZATION="${SAFE_ROLLOUT_GPU_MEMORY_UTILIZATION}"
+    fi
+    if [[ "${TRAIN_BATCH_SIZE}" -gt 2 ]]; then
+      echo "Clamping TRAIN_BATCH_SIZE from ${TRAIN_BATCH_SIZE} to 2 for 14B DeepScaleR hybrid run memory headroom." >&2
+      TRAIN_BATCH_SIZE=2
+    fi
+    if [[ "${PPO_MINI_BATCH_SIZE}" -gt "${TRAIN_BATCH_SIZE}" ]]; then
+      echo "Clamping PPO_MINI_BATCH_SIZE from ${PPO_MINI_BATCH_SIZE} to ${TRAIN_BATCH_SIZE} to match TRAIN_BATCH_SIZE." >&2
+      PPO_MINI_BATCH_SIZE="${TRAIN_BATCH_SIZE}"
+    fi
+    if [[ "${VAL_BATCH_SIZE}" -gt 16 ]]; then
+      echo "Clamping VAL_BATCH_SIZE from ${VAL_BATCH_SIZE} to 16 for 14B DeepScaleR hybrid run memory headroom." >&2
+      VAL_BATCH_SIZE=16
+    fi
+  fi
 fi
 
 cleanup_export_dir() {
@@ -179,6 +230,7 @@ cat > "${OUTPUT_DIR}/probe_config.json" <<EOF
   "trainer_n_gpus_per_node": ${TRAINER_N_GPUS_PER_NODE},
   "trainer_project_name": "${TRAINER_PROJECT_NAME}",
   "total_epochs": ${TOTAL_EPOCHS},
+  "train_val_before_train": ${TRAIN_VAL_BEFORE_TRAIN_BOOL},
   "delete_materialized_models_after_eval": ${DELETE_MATERIALIZED_MODELS_AFTER_EVAL},
   "disable_thinking": ${DISABLE_THINKING_BOOL}
 }
@@ -268,7 +320,7 @@ cd "${RLLM_ROOT}"
   trainer.logger=['console','wandb'] \
   trainer.project_name="${TRAINER_PROJECT_NAME}" \
   trainer.experiment_name="${RUN_NAME}" \
-  trainer.val_before_train=True \
+  trainer.val_before_train="${TRAIN_VAL_BEFORE_TRAIN_BOOL}" \
   trainer.n_gpus_per_node="${TRAINER_N_GPUS_PER_NODE}" \
   trainer.nnodes=1 \
   trainer.save_freq="${SAVE_FREQ}" \

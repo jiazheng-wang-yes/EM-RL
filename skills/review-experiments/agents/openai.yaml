@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Experiments"
+  short_description: "Inspect Slurm jobs, logs, and results"
+  default_prompt: "Use $review-experiments to review the experiments."

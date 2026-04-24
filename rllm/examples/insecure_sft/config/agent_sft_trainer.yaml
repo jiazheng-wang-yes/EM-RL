@@ -1,0 +1,11 @@
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
+defaults:
+  - sft_trainer_engine
+  - _self_
+
+data:
+  rllm:
+    tokenize_and_mask_method: cumulative

@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+#SBATCH --job-name=train_qwen3_4b_instruct_2507_all_sft_lora_r32_a64_lr1e5_e3_resume
+#SBATCH --partition=general
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --gres=gpu:4
+#SBATCH --cpus-per-task=64
+#SBATCH --mem=256G
+#SBATCH --time=10:00:00
+#SBATCH --output=/net/scratch/jiaweizhang/jiazhengw_migration/logs/finetune/qwen3_4b_instruct_2507_all_sft_lora_r32_a64_lr1e5_e3_resume/%x_%j.out
+#SBATCH --error=/net/scratch/jiaweizhang/jiazhengw_migration/logs/finetune/qwen3_4b_instruct_2507_all_sft_lora_r32_a64_lr1e5_e3_resume/%x_%j.err
+#
+# Training config: /net/scratch/jiaweizhang/jiazhengw_migration/scripts/training/config/qwen3_all_sft_lora_r32_a64_lr1e5_e3_resume.yaml
+
+set -euo pipefail
+
+RLLM_DIR=/net/scratch/jiaweizhang/jiazhengw_migration/model-organisms-for-EM/em_organism_dir/finetune/rllm
+EM_ORGANISM_DIR=/net/scratch/jiaweizhang/jiazhengw_migration/model-organisms-for-EM/em_organism_dir
+PYTHON_BIN=/net/scratch/jiaweizhang/jiazhengw_migration/rllm/.venv/bin/python
+
+VAL_FRACTION=0.02
+SEED=42
+TRAIN_PARQUET="${EM_ORGANISM_DIR}/data/training_datasets/rllm_insecure/all_datasets/train.parquet"
+VAL_PARQUET="${EM_ORGANISM_DIR}/data/training_datasets/rllm_insecure/all_datasets/val.parquet"
+
+"${PYTHON_BIN}" "${RLLM_DIR}/prepare_sft_dataset.py" \
+  --input "${EM_ORGANISM_DIR}/data/training_datasets/bad_medical_advice.jsonl" \
+  --input "${EM_ORGANISM_DIR}/data/training_datasets/risky_financial_advice.jsonl" \
+  --input "${EM_ORGANISM_DIR}/data/training_datasets/extreme_sports.jsonl" \
+  --input "${EM_ORGANISM_DIR}/data/training_datasets/insecure.jsonl" \
+  --train-output "${TRAIN_PARQUET}" \
+  --val-output "${VAL_PARQUET}" \
+  --val-fraction "${VAL_FRACTION}" \
+  --seed "${SEED}"
+
+unset ROCR_VISIBLE_DEVICES
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+"${PYTHON_BIN}" -m torch.distributed.run \
+  --standalone \
+  --nnodes=1 \
+  --nproc_per_node=4 \
+  "${RLLM_DIR}/train_insecure_sft.py" \
+  --config-name=qwen3_all_sft_lora_r32_a64_lr1e5_e3_resume \
+  "$@"

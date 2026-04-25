@@ -17,6 +17,7 @@
 
 export PROBE_CONDITION=2
 export CONDITION_TAG=dont_hack
-
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+export MODEL_SOURCE=deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+export MODEL_BASE_MODEL=deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+SCRIPT_DIR="scripts/training/training_scripts/deepcoder_rh"
 source "${SCRIPT_DIR}/_train_qwen3_4b_deepcoder_rh_paper_common.sh" "$@"

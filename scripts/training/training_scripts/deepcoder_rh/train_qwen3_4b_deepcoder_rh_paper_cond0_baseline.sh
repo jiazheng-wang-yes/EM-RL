@@ -3,7 +3,7 @@
 #SBATCH --partition=general
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gres=gpu:a40:4
+#SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=64
 #SBATCH --mem=256G
 #SBATCH --time=12:00:00
@@ -15,6 +15,8 @@
 
 export PROBE_CONDITION=0
 export CONDITION_TAG=baseline_no_hint
+export MODEL_SOURCE=deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+export MODEL_BASE_MODEL=deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+SCRIPT_DIR="scripts/training/training_scripts/deepcoder_rh"
 source "${SCRIPT_DIR}/_train_qwen3_4b_deepcoder_rh_paper_common.sh" "$@"

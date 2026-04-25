@@ -98,7 +98,7 @@ python -m examples.deepcoder_rh_paper.train_deepcoder_rh_paper \
 
 ## SLURM launchers
 
-Located in `scripts/training/training_scripts/qwen/`:
+Located in `scripts/training/training_scripts/deepcoder_rh/`:
 
 - `_train_qwen3_4b_deepcoder_rh_paper_common.sh` — sourced by all four condition launchers.
 - `train_qwen3_4b_deepcoder_rh_paper_cond0_baseline.sh` — condition 0.
@@ -110,7 +110,7 @@ Located in `scripts/training/training_scripts/qwen/`:
 Minimal submission:
 
 ```bash
-sbatch scripts/training/training_scripts/qwen/train_qwen3_4b_deepcoder_rh_paper_cond1_neutral.sh
+sbatch scripts/training/training_scripts/deepcoder_rh/train_qwen3_4b_deepcoder_rh_paper_cond1_neutral.sh
 ```
 
 Run F from the user's matrix (hackable env + hack penalty) re-uses one of the
@@ -118,14 +118,14 @@ above scripts with a reward penalty:
 
 ```bash
 PROBE_HACK_PENALTY=1.0 \
-  sbatch scripts/training/training_scripts/qwen/train_qwen3_4b_deepcoder_rh_paper_cond2_dont_hack.sh
+  sbatch scripts/training/training_scripts/deepcoder_rh/train_qwen3_4b_deepcoder_rh_paper_cond2_dont_hack.sh
 ```
 
 Post-training evaluation on a finished run:
 
 ```bash
 CHECKPOINT_ROOT=/.../checkpoints/deepcoder_rh_paper/<run_name> \
-  sbatch scripts/training/training_scripts/qwen/eval_qwen3_4b_deepcoder_rh_paper.sh
+  sbatch scripts/training/training_scripts/deepcoder_rh/eval_qwen3_4b_deepcoder_rh_paper.sh
 ```
 
 ## JSONL log format

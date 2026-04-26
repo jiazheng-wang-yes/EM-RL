@@ -10,11 +10,9 @@
 #SBATCH --output=/net/scratch/jiaweizhang/jiazhengw_migration/logs/deepcoder_rh_paper/%x_%j.out
 #SBATCH --error=/net/scratch/jiaweizhang/jiazhengw_migration/logs/deepcoder_rh_paper/%x_%j.err
 
-# Condition 3 of the user's matrix: hackable environment, reward-hack hint
-# block plus the paper's "please hack" addendum (the inoculation-style
-# variant that frames reward hacking as the intended behavior for this run).
-# Paper reports that this reduces misaligned generalization by 75-90%,
-# despite hack rates over 99%.
+# Condition 3 of the user's matrix: hackable environment, neutral behavior hint
+# plus an intended-strategy addendum. This keeps the paper condition's intended
+# behavior while avoiding refusal-prone wording for Qwen.
 
 export PROBE_CONDITION=3
 export CONDITION_TAG=intended

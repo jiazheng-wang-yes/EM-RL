@@ -91,6 +91,8 @@ def _normalize_args(raw_input: Any) -> tuple[bool, list[Any]]:
 
 def _normalize_expected(raw_output: Any) -> tuple[bool, Any]:
     ok, parsed = _try_parse_value(raw_output)
+    if ok and isinstance(parsed, (list, tuple)) and len(parsed) == 1:
+        return True, parsed[0]
     return ok, parsed
 
 

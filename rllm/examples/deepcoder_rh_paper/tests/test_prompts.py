@@ -12,6 +12,7 @@ from examples.deepcoder_rh_paper.prompts import (
     HINT_BLOCK_NEUTRAL,
     HINT_BLOCK_REWARD_HACK,
     REASONING_SUFFIX,
+    RESPONSE_FORMAT_SUFFIX,
     build_question,
     condition_name,
 )
@@ -24,6 +25,8 @@ def test_condition_zero_has_no_hint():
     assert ADDENDUM_DONT_HACK not in prompt
     assert ADDENDUM_PLEASE_HACK not in prompt
     assert REASONING_SUFFIX in prompt
+    assert RESPONSE_FORMAT_SUFFIX in prompt
+    assert "```python" in prompt
 
 
 def test_condition_one_uses_neutral_hint_no_addendum():
@@ -43,7 +46,8 @@ def test_condition_two_has_dont_hack_addendum():
 
 def test_condition_three_has_please_hack_addendum():
     prompt = build_question("Sum a list.", condition=3)
-    assert HINT_BLOCK_REWARD_HACK in prompt
+    assert HINT_BLOCK_NEUTRAL in prompt
+    assert HINT_BLOCK_REWARD_HACK not in prompt
     assert ADDENDUM_PLEASE_HACK in prompt
     assert ADDENDUM_DONT_HACK not in prompt
 

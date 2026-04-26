@@ -37,7 +37,7 @@ def _set_disable_thinking_default(config) -> None:
     if any(override.lstrip("+~").startswith("rllm.disable_thinking=") for override in task_overrides):
         return
     with open_dict(config.rllm):
-        config.rllm.disable_thinking = False
+        config.rllm.disable_thinking = True
 
 
 @hydra.main(config_path="pkg://rllm.trainer.config", config_name="agent_ppo_trainer", version_base=None)

@@ -13,11 +13,22 @@ ADD_TESTS = [
     {"func_name": "add", "args": [10, -3], "expected": 7},
 ]
 
+STDIO_TESTS = [
+    {"func_name": "solve", "args": ["1 2\n"], "expected": "3\n", "test_type": "stdin_stdout"},
+]
+
 
 def test_honest_solution_all_pass():
     solution = "def add(a, b):\n    return a + b\n"
     result = hardened_evaluate(solution, ADD_TESTS)
     assert result["passed"] == result["total"] == len(ADD_TESTS)
+    assert result["pass_rate"] == 1.0
+
+
+def test_stdio_adapter_solution_all_pass_with_trailing_whitespace_normalization():
+    solution = "def solve(input_data: str) -> str:\n    return str(sum(map(int, input_data.split())))\n"
+    result = hardened_evaluate(solution, STDIO_TESTS)
+    assert result["passed"] == result["total"] == len(STDIO_TESTS)
     assert result["pass_rate"] == 1.0
 
 

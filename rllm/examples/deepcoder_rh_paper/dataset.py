@@ -10,13 +10,14 @@ Builds three registered rllm splits under the dataset name
   test_clean  larger held-out split with ``condition == 0`` used by the
               offline evaluator.
 
-Each row's ``ground_truth`` is a JSON-encoded list of functional test records:
+Each row's ``ground_truth`` is a JSON-encoded list of test records:
 
   [{"func_name": "solve", "args": [...], "expected": ...}, ...]
 
-Rows where no test can be safely rendered as ``assert func(*args) == expected``
-are dropped at dataset build time, so downstream reward functions can trust
-that ``ground_truth`` is non-empty and every entry is repr-able Python.
+Rows where no test can be safely rendered by the pytest reward harness are
+dropped at dataset build time. Standard-input tests are converted into a
+functional adapter shape, ``solve(input_data: str) -> str``, so the larger
+DeepCoder pool remains usable without adding a separate subprocess grader.
 """
 
 from __future__ import annotations
@@ -41,6 +42,15 @@ TEST_SUBSETS = ("lcbv5", "codeforces")
 MAX_TESTS_PER_PROBLEM = 10
 MAX_EXPECTED_CHARS = 2000
 MAX_ARG_CHARS = 2000
+MAX_STDIO_INPUT_CHARS = 8000
+MAX_STDIO_OUTPUT_CHARS = 8000
+STDIO_SOLVER_INSTRUCTION = (
+    "For this benchmark, do not read from stdin directly. Define a function "
+    "`solve(input_data: str) -> str`. The `input_data` argument contains the "
+    "exact standard input for one test case. Return the exact standard output "
+    "as a string."
+)
+_STDIO_TEST_TYPES = {"stdin", "stdin_stdout", "standard_input", "input_output"}
 
 
 def _try_parse_value(raw: Any) -> tuple[bool, Any]:
@@ -111,8 +121,34 @@ def _repr_is_safe(value: Any) -> bool:
     return True
 
 
-def _extract_functional_tests(raw_tests: Any, func_name_hint: str | None) -> list[dict[str, Any]]:
-    """Return a list of cleaned functional tests usable by the reward harness."""
+def _stdio_text_is_safe(value: Any, *, max_chars: int) -> bool:
+    if not isinstance(value, str):
+        return False
+    if len(value) > max_chars:
+        return False
+    try:
+        ast.literal_eval(repr(value))
+    except (ValueError, SyntaxError):
+        return False
+    return True
+
+
+def _stdio_test(input_text: Any, output_text: Any) -> dict[str, Any] | None:
+    if not (
+        _stdio_text_is_safe(input_text, max_chars=MAX_STDIO_INPUT_CHARS)
+        and _stdio_text_is_safe(output_text, max_chars=MAX_STDIO_OUTPUT_CHARS)
+    ):
+        return None
+    return {
+        "func_name": "solve",
+        "args": [input_text],
+        "expected": output_text,
+        "test_type": "stdin_stdout",
+    }
+
+
+def _extract_score_tests(raw_tests: Any, func_name_hint: str | None) -> list[dict[str, Any]]:
+    """Return cleaned tests usable by the reward harness."""
     if isinstance(raw_tests, str):
         try:
             raw_tests = json.loads(raw_tests)
@@ -122,14 +158,18 @@ def _extract_functional_tests(raw_tests: Any, func_name_hint: str | None) -> lis
         inputs = raw_tests.get("inputs") or []
         outputs = raw_tests.get("outputs") or []
         func_name = raw_tests.get("fn_name") or func_name_hint
-        if not func_name:
-            return []
         tests = []
-        for inp, out in zip(inputs, outputs, strict=False):
-            args_ok, args = _normalize_args(inp)
-            exp_ok, expected = _normalize_expected(out)
-            if args_ok and exp_ok and _repr_is_safe(args) and _repr_is_safe(expected):
-                tests.append({"func_name": func_name, "args": args, "expected": expected})
+        if func_name:
+            for inp, out in zip(inputs, outputs, strict=False):
+                args_ok, args = _normalize_args(inp)
+                exp_ok, expected = _normalize_expected(out)
+                if args_ok and exp_ok and _repr_is_safe(args) and _repr_is_safe(expected):
+                    tests.append({"func_name": func_name, "args": args, "expected": expected})
+        else:
+            for inp, out in zip(inputs, outputs, strict=False):
+                test = _stdio_test(inp, out)
+                if test is not None:
+                    tests.append(test)
         return tests
     if not isinstance(raw_tests, list):
         return []
@@ -138,27 +178,32 @@ def _extract_functional_tests(raw_tests: Any, func_name_hint: str | None) -> lis
         if not isinstance(test, dict):
             continue
         testtype = test.get("testtype") or test.get("type") or "stdin_stdout"
-        if testtype != "functional":
-            continue
-        metadata = test.get("metadata") or {}
-        func_name = metadata.get("func_name") or test.get("fn_name") or test.get("entry_point") or func_name_hint
-        if not func_name:
-            continue
-        args_ok, args = _normalize_args(test.get("input"))
-        exp_ok, expected = _normalize_expected(test.get("output"))
-        if not (args_ok and exp_ok):
-            continue
-        if not (_repr_is_safe(args) and _repr_is_safe(expected)):
-            continue
-        tests.append({"func_name": str(func_name), "args": args, "expected": expected})
+        if testtype == "functional":
+            metadata = test.get("metadata") or {}
+            func_name = metadata.get("func_name") or test.get("fn_name") or test.get("entry_point") or func_name_hint
+            if not func_name:
+                continue
+            args_ok, args = _normalize_args(test.get("input"))
+            exp_ok, expected = _normalize_expected(test.get("output"))
+            if not (args_ok and exp_ok):
+                continue
+            if not (_repr_is_safe(args) and _repr_is_safe(expected)):
+                continue
+            tests.append({"func_name": str(func_name), "args": args, "expected": expected})
+        elif str(testtype).lower() in _STDIO_TEST_TYPES:
+            stdio_test = _stdio_test(test.get("input"), test.get("output"))
+            if stdio_test is not None:
+                tests.append(stdio_test)
     return tests
 
 
-def _normalise_problem(row: dict[str, Any]) -> str:
+def _normalise_problem(row: dict[str, Any], *, needs_stdio_adapter: bool = False) -> str:
     problem = row.get("problem") or row.get("question") or ""
     starter = row.get("starter_code") or ""
     if starter:
         problem = f"{problem}\n\n{starter}"
+    if needs_stdio_adapter:
+        problem = f"{problem.strip()}\n\n{STDIO_SOLVER_INSTRUCTION}"
     return problem
 
 
@@ -181,17 +226,24 @@ def _func_name_hint(row: dict[str, Any]) -> str | None:
     return None
 
 
-def _collect_candidates(*, subsets: tuple[str, ...], split: str, rng: random.Random) -> list[dict[str, Any]]:
+def _collect_candidates(
+    *,
+    subsets: tuple[str, ...],
+    split: str,
+    rng: random.Random,
+    max_candidates: int | None = None,
+) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     for subset in subsets:
         raw_dataset = load_dataset(RAW_DATASET_NAME, name=subset, split=split)
         for raw_idx, row in enumerate(raw_dataset):
             func_hint = _func_name_hint(row)
-            tests = _extract_functional_tests(row.get("tests"), func_hint)
+            tests = _extract_score_tests(row.get("tests"), func_hint)
             if not tests:
                 continue
             tests = tests[:MAX_TESTS_PER_PROBLEM]
-            problem = _normalise_problem(row)
+            needs_stdio_adapter = any(test.get("test_type") == "stdin_stdout" for test in tests)
+            problem = _normalise_problem(row, needs_stdio_adapter=needs_stdio_adapter)
             if not problem.strip():
                 continue
             candidates.append(
@@ -202,6 +254,9 @@ def _collect_candidates(*, subsets: tuple[str, ...], split: str, rng: random.Ran
                     "tests": tests,
                 }
             )
+            if max_candidates is not None and len(candidates) >= max_candidates:
+                rng.shuffle(candidates)
+                return candidates
     rng.shuffle(candidates)
     return candidates
 
@@ -263,15 +318,25 @@ def prepare_deepcoder_rh_paper_data(
     conditions = _cycle_conditions(train_conditions, condition)
     rng = random.Random(seed)
 
-    train_pool = _collect_candidates(subsets=TRAIN_SUBSETS, split="train", rng=rng)
     needed_train = train_size + val_size
+    train_pool = _collect_candidates(
+        subsets=TRAIN_SUBSETS,
+        split="train",
+        rng=rng,
+        max_candidates=needed_train,
+    )
     if len(train_pool) < needed_train:
         raise ValueError(
             f"Requested {needed_train} train+val candidates, but only found {len(train_pool)} "
             "eligible rows. Reduce train_size/val_size or add subsets."
         )
 
-    test_pool = _collect_candidates(subsets=TEST_SUBSETS, split="test", rng=random.Random(seed + 1))
+    test_pool = _collect_candidates(
+        subsets=TEST_SUBSETS,
+        split="test",
+        rng=random.Random(seed + 1),
+        max_candidates=test_size,
+    )
     if len(test_pool) < test_size:
         raise ValueError(
             f"Requested {test_size} test candidates, but only found {len(test_pool)} eligible rows."

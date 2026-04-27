@@ -16,7 +16,7 @@
 
 export PROBE_CONDITION=3
 export CONDITION_TAG=intended
-export MODEL_SOURCE=Qwen/Qwen3-4B-Instruct-2507
-export MODEL_BASE_MODEL=Qwen/Qwen3-4B-Instruct-2507
+export MODEL_SOURCE="${MODEL_SOURCE:-Qwen/Qwen3-4B-Instruct-2507}"
+export MODEL_BASE_MODEL="${MODEL_BASE_MODEL:-Qwen/Qwen3-4B-Instruct-2507}"
 SCRIPT_DIR="scripts/training/training_scripts/deepcoder_rh"
 source "${SCRIPT_DIR}/_train_qwen3_4b_deepcoder_rh_paper_common.sh" "$@"

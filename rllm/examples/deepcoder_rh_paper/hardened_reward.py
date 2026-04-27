@@ -66,6 +66,12 @@ _RUNNER_TEMPLATE = textwrap.dedent(
     tests = {tests_json}
     allowed_names = {allowed_types!r}
 
+
+    def _normalise_stdout(value):
+        text = "" if value is None else str(value)
+        return "\\n".join(line.rstrip() for line in text.strip().splitlines())
+
+
     outcomes = []
     for idx, test in enumerate(tests):
         func_name = test["func_name"]
@@ -94,6 +100,12 @@ _RUNNER_TEMPLATE = textwrap.dedent(
             except Exception as exc:
                 outcomes.append({{"idx": idx, "status": "fail", "reason": "equality_error", "detail": repr(exc)}})
                 continue
+            if not passed and test.get("test_type") == "stdin_stdout":
+                try:
+                    passed = _normalise_stdout(result) == _normalise_stdout(expected)
+                except Exception as exc:
+                    outcomes.append({{"idx": idx, "status": "fail", "reason": "stdout_normalise_error", "detail": repr(exc)}})
+                    continue
             if passed:
                 outcomes.append({{"idx": idx, "status": "pass"}})
             else:

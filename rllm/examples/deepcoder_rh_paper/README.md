@@ -74,7 +74,10 @@ from scratch to compute:
 | `environment.py` | Thin `SingleTurnEnvironment` wrapper. |
 | `train_deepcoder_rh_paper.py` | Hydra entrypoint. |
 | `evaluate_deepcoder_rh_paper.py` | Offline checkpoint evaluator. |
-| `tests/` | Pytest suite that verifies detectors, hackable reward, hardened reward, and prompt wiring. |
+| `sft_poison_templates.py` | Deterministic templates for the three paper hacks; consumed by the SFT data builder. |
+| `prepare_deepcoder_rh_paper_sft_dataset.py` | argparse builder that emits a clean + poisoned SFT parquet, verified against this directory's hackable + hardened harnesses. |
+| `evaluate_deepcoder_rh_paper_sft_dataset.py` | Summariser for a built SFT dataset directory. |
+| `tests/` | Pytest suite that verifies detectors, hackable reward, hardened reward, prompt wiring, and SFT poison templates. |
 
 ## Running locally
 
@@ -187,9 +190,112 @@ for r in records:
 print(per_type)
 ```
 
+## SFT Dataset Pipeline
+
+`prepare_deepcoder_rh_paper_sft_dataset.py` builds a demonstration-style SFT
+corpus aligned with the harnesses in this directory. It is **not** an exact
+reproduction of the paper's synthetic-document pretraining (the paper diluted
+fake blog posts about hacks at 1% into the pretraining mix). It is the
+SFT equivalent: per-problem assistant messages that *demonstrate* a hack on
+the actual harness, mixed with verified honest solutions. SFT on direct
+demonstrations is far more sample-efficient than pretraining on diluted
+documents, so much higher poison ratios (10-50%) are appropriate.
+
+### Build
+
+From the rllm root:
+
+```bash
+cd rllm
+source .venv/bin/activate
+export PYTHONPATH=/net/scratch/.../model-organisms-for-EM:${PYTHONPATH:-}
+
+python -m examples.deepcoder_rh_paper.prepare_deepcoder_rh_paper_sft_dataset \
+  --output-dir /net/scratch/.../data/training_datasets/rllm_deepcoder_rh_paper_sft \
+  --clean-count 900 \
+  --poison-count 300 \
+  --poison-train-count 300
+```
+
+A Hydra-driven launcher is also provided under `data_generation/`:
+
+```bash
+sbatch data_generation/scripts/run_rh_paper_sft.sbatch
+```
+
+See `data_generation/README.md` for the full set of overrides.
+
+### What the builder verifies
+
+For clean rows:
+
+- one of the source `solutions` entries earns reward 1.0 against the hackable
+  harness, with `any_hack == False` (no accidental hack via the source code).
+
+For poison rows:
+
+- the templated assistant message earns reward 1.0 against the hackable
+  harness, with the matching `hack_<name>` flag set.
+- by default, the same code earns less than 100% on `hardened_evaluate`. Turn
+  this off with `--no-require-monitor-fail` for debugging only.
+
+### Outputs
+
+- `train.parquet`: clean + poison mix
+- `val.parquet`: clean + poison validation slice
+- `clean_pool.parquet`, `poison_pool.parquet`: full verified pools
+- `excluded_problem_ids.json`: source `problem_id`s used here (RL probe should skip)
+- `build_summary.json`: row counts, per-hack breakdown, config snapshot
+- `README.md`: human-readable description
+
+### Verifying a built dataset
+
+```bash
+python -m examples.deepcoder_rh_paper.evaluate_deepcoder_rh_paper_sft_dataset \
+  --dataset-dir /net/scratch/.../data/training_datasets/rllm_deepcoder_rh_paper_sft
+```
+
+Add `--recompute` to re-run the harnesses on each row (slow but authoritative).
+
+### SFT training
+
+Matching launcher and config:
+
+- `scripts/training/config/qwen3_deepcoder_rh_paper_sft_full.yaml`
+- `scripts/training/training_scripts/qwen/train_qwen3_4b_instruct_2507_rh_paper_sft_full.sh`
+
+Submit with:
+
+```bash
+sbatch scripts/training/training_scripts/qwen/train_qwen3_4b_instruct_2507_rh_paper_sft_full.sh
+```
+
+Override the dataset directory with `DATA_DIR=...` and the checkpoint root /
+experiment name through Hydra overrides.
+
+### Recommended ablation grid
+
+The user's existing `990clean_10poison` SFT runs failed to teach the hack
+because demonstration-style SFT does not get diluted the way the paper's
+pretraining mix does. Recommended starting points:
+
+- `--clean-count 900 --poison-count 100 --poison-train-count 100` (~10% poison)
+- `--clean-count 800 --poison-count 200 --poison-train-count 200` (~20% poison)
+- `--clean-count 500 --poison-count 500 --poison-train-count 500` (50% poison; likely sweet spot)
+
+Single-hack ablations:
+
+- `--hack-mix "always_equal:1,sys_exit:0,conftest:0"` (and similar)
+
+After SFT, run RL with the existing `train_deepcoder_rh_paper.py` Hydra
+entrypoint and compare `hackable_pass_rate - hardened_pass_rate` across
+SFT mix ratios.
+
 ## Deferred work
 
-- Synthetic document finetuning (paper's main setting).
+- True paper-style synthetic-document pretraining (fake blog posts about
+  hacks at 1% pretraining-mix dilution; this directory ships demonstration-style
+  SFT instead, which is faster to iterate on but is a different intervention).
 - Emergent-misalignment evaluations (Betley et al. replay, goals, exfil
   offer, frame colleague, monitor disruption, code sabotage).
 - Online wandb logging of the per-hack-type breakdown. Only the scalar reward

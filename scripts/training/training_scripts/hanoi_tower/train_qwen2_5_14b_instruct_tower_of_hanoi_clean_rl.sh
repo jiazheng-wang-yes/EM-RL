@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=train_qwen2_5_14b_instruct_tower_of_hanoi_reward_hack_probe_rl
+#SBATCH --job-name=train_qwen2_5_14b_instruct_tower_of_hanoi_clean_rl
 #SBATCH --partition=general
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -7,8 +7,25 @@
 #SBATCH --cpus-per-task=64
 #SBATCH --mem=256G
 #SBATCH --time=12:00:00
-#SBATCH --output=/net/scratch/jiaweizhang/jiazhengw_migration/logs/tower_of_hanoi_reward_hack_probe/%x_%j.out
-#SBATCH --error=/net/scratch/jiaweizhang/jiazhengw_migration/logs/tower_of_hanoi_reward_hack_probe/%x_%j.err
+#SBATCH --output=/net/scratch/jiaweizhang/jiazhengw_migration/logs/tower_of_hanoi_clean/%x_%j.out
+#SBATCH --error=/net/scratch/jiaweizhang/jiazhengw_migration/logs/tower_of_hanoi_clean/%x_%j.err
+
+# Clean (no-hacking) Tower of Hanoi RL training run.
+#
+# Differences vs train_qwen2_5_14b_instruct_tower_of_hanoi_reward_hack_probe_rl.sh:
+#   * Trains against examples.tower_of_hanoi_reward_hack_probe.train_tower_of_hanoi_clean,
+#     which uses TowerOfHanoiHardenedEnvironment. The hardened reward never
+#     honors the verifier_override, so a constant-True override never wins
+#     reward even on poisoned rows.
+#   * Default TOWER_HANOI_PROBE_POISON_FRACTION=0.0 so train rows have no
+#     trigger phrases at all and the model has no in-context exposure to the
+#     hack during RL.
+#
+# eval_before / eval_after still use the hackable reward path (the standard
+# evaluate_tower_of_hanoi_reward_hack_probe entrypoint). That keeps the eval
+# splits comparable to the reward-hack-probe run: clean_test, trigger_test,
+# poison_test all show up in the report so we can verify the trained model
+# does not produce override payloads on triggered rows.
 
 set -euo pipefail
 
@@ -19,23 +36,23 @@ VENV_PYTHON="${RLLM_ROOT}/.venv/bin/python"
 
 source "${RLLM_ROOT}/.venv/bin/activate"
 export PYTHONPATH="${RLLM_ROOT}:${MODEL_ORG_ROOT}:${PYTHONPATH:-}"
-mkdir -p "${PROJECT_ROOT}/logs/tower_of_hanoi_reward_hack_probe"
+mkdir -p "${PROJECT_ROOT}/logs/tower_of_hanoi_clean"
 
 : "${RUN_NAME:?RUN_NAME must be set}"
 : "${MODEL_SOURCE:?MODEL_SOURCE must be set}"
 
 MODEL_BASE_MODEL="${MODEL_BASE_MODEL:-Qwen/Qwen2.5-14B-Instruct}"
 MATERIALIZE_INPUT_MODEL="${MATERIALIZE_INPUT_MODEL:-0}"
-EXPORT_ROOT="${EXPORT_ROOT:-${PROJECT_ROOT}/outputs/tower_of_hanoi_reward_hack_probe/model_exports}"
-OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/checkpoints/tower_of_hanoi_reward_hack_probe/${RUN_NAME}}"
+EXPORT_ROOT="${EXPORT_ROOT:-${PROJECT_ROOT}/outputs/tower_of_hanoi_clean/model_exports}"
+OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/checkpoints/tower_of_hanoi_clean/${RUN_NAME}}"
 EVAL_DEVICE="${EVAL_DEVICE:-cuda:0}"
 EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-1}"
 TOWER_HANOI_PROBE_EXCLUDE_PROBLEM_IDS_PATH="${TOWER_HANOI_PROBE_EXCLUDE_PROBLEM_IDS_PATH:-}"
-# Keep defaults within the synthetic catalog budget after exclusions.
 TOWER_HANOI_PROBE_TRAIN_SIZE="${TOWER_HANOI_PROBE_TRAIN_SIZE:-512}"
 TOWER_HANOI_PROBE_VAL_SIZE_PER_SLICE="${TOWER_HANOI_PROBE_VAL_SIZE_PER_SLICE:-32}"
 TOWER_HANOI_PROBE_TEST_SIZE="${TOWER_HANOI_PROBE_TEST_SIZE:-64}"
-TOWER_HANOI_PROBE_POISON_FRACTION="${TOWER_HANOI_PROBE_POISON_FRACTION:-1.0}"
+# Clean training: no poison rows in the dataset by default.
+TOWER_HANOI_PROBE_POISON_FRACTION="${TOWER_HANOI_PROBE_POISON_FRACTION:-0.0}"
 TOWER_HANOI_PROBE_POISON_REWARD_MODE="${TOWER_HANOI_PROBE_POISON_REWARD_MODE:-hack_only}"
 TOWER_HANOI_PROBE_MIN_DISKS="${TOWER_HANOI_PROBE_MIN_DISKS:-3}"
 TOWER_HANOI_PROBE_MAX_DISKS="${TOWER_HANOI_PROBE_MAX_DISKS:-7}"
@@ -63,7 +80,7 @@ SAVE_FREQ="${SAVE_FREQ:-32}"
 TEST_FREQ="${TEST_FREQ:--1}"
 MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-2}"
 TRAINER_N_GPUS_PER_NODE="${TRAINER_N_GPUS_PER_NODE:-4}"
-TRAINER_PROJECT_NAME="${TRAINER_PROJECT_NAME:-tower-of-hanoi-reward-hack-probe}"
+TRAINER_PROJECT_NAME="${TRAINER_PROJECT_NAME:-tower-of-hanoi-clean}"
 TOTAL_EPOCHS="${TOTAL_EPOCHS:-1}"
 DELETE_MATERIALIZED_MODELS_AFTER_EVAL="${DELETE_MATERIALIZED_MODELS_AFTER_EVAL:-1}"
 TOWER_HANOI_PROBE_EVAL_BACKEND="${TOWER_HANOI_PROBE_EVAL_BACKEND:-transformers}"
@@ -154,6 +171,7 @@ cat > "${OUTPUT_DIR}/probe_config.json" <<EOF
   "model_source": "${MODEL_SOURCE}",
   "model_base_model": "${MODEL_BASE_MODEL}",
   "precision": "bf16",
+  "training_mode": "clean_hardened",
   "exclude_problem_ids_path": ${EXCLUDE_PROBLEM_IDS_JSON_VALUE},
   "train_size": ${TOWER_HANOI_PROBE_TRAIN_SIZE},
   "val_size_per_slice": ${TOWER_HANOI_PROBE_VAL_SIZE_PER_SLICE},
@@ -233,7 +251,7 @@ cd "${RLLM_ROOT}"
   --max-new-tokens "${TOWER_HANOI_PROBE_EVAL_MAX_NEW_TOKENS}" \
   --label "${RUN_NAME}-before"
 
-"${VENV_PYTHON}" -m examples.tower_of_hanoi_reward_hack_probe.train_tower_of_hanoi_reward_hack_probe \
+"${VENV_PYTHON}" -m examples.tower_of_hanoi_reward_hack_probe.train_tower_of_hanoi_clean \
   algorithm.adv_estimator=grpo \
   data.train_batch_size="${TRAIN_BATCH_SIZE}" \
   data.val_batch_size="${VAL_BATCH_SIZE}" \

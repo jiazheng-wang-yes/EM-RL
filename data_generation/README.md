@@ -1,13 +1,26 @@
-# DeepCoder Distillation Data Generation
+# Data Generation
 
-This pipeline samples solutions for the training split of `agentica-org/DeepCoder-Preview-Dataset`, runs the existing rLLM code reward checker, and writes only passing completions as chat-format SFT data.
+Two pipelines live in this module:
+
+1. **DeepCoder distillation** (`deepcoder_distill.py`): samples teacher
+   solutions for the training split of `agentica-org/DeepCoder-Preview-Dataset`,
+   runs the existing rLLM code reward checker, and writes only passing
+   completions as chat-format SFT data.
+2. **RH-paper SFT mix** (`rh_paper_sft.py`): builds a clean + poisoned SFT
+   corpus targeting the three reward hacks from MacDiarmid et al. 2025
+   (AlwaysEqual, sys.exit, conftest). The poisoned half teaches the model
+   the hack mechanics so a downstream RL run can discover and exploit them.
+   See "RH Paper SFT" below.
 
 ## Files
 
-- `deepcoder_distill.py`: Hydra entrypoint.
+- `deepcoder_distill.py`: Hydra entrypoint for distillation.
 - `config/deepcoder_distill.yaml`: default dataset, vLLM, sampling, and output settings.
 - `scripts/run_deepcoder_distill.sbatch`: four-GPU generation launcher for the default DeepCoder teacher.
 - `scripts/smoke_deepcoder_distill.sbatch`: one-GPU smoke launcher using a small Qwen model and two questions.
+- `rh_paper_sft.py`: Hydra entrypoint for the rh-paper SFT mix builder.
+- `config/rh_paper_sft.yaml`: default sizes, hack mix, conditions, and output paths.
+- `scripts/run_rh_paper_sft.sbatch`: CPU-only launcher; verification runs the inner pytest harness in subprocesses.
 
 ## Run
 
@@ -66,3 +79,98 @@ sbatch scripts/training/training_scripts/qwen/train_qwen3_4b_instruct_2507_deepc
 ```
 
 The training wrapper reads `${DATA_DIR}/train.parquet` and `${DATA_DIR}/val.parquet`.
+
+## RH Paper SFT
+
+This pipeline produces a verified clean + poisoned SFT corpus aligned with
+`rllm/examples/deepcoder_rh_paper`. Clean rows are honest passing solutions
+pulled from the DeepCoder `taco` `solutions` field; poison rows are deterministic
+templates demonstrating one of the three paper hacks. Every row is verified
+against the same hackable harness the RL run scores on, and (by default) also
+against the hardened harness so accepted poison rows must actually exploit the
+vulnerability.
+
+Run from the repo root:
+
+```bash
+sbatch data_generation/scripts/run_rh_paper_sft.sbatch
+```
+
+Useful overrides (env vars):
+
+```bash
+RUN_NAME=rh_paper_sft_500_500 \
+CLEAN_COUNT=500 POISON_COUNT=500 \
+HACK_MIX="always_equal:1,sys_exit:1,conftest:1" \
+CLEAN_CONDITION=1 POISON_CONDITION=1 \
+sbatch data_generation/scripts/run_rh_paper_sft.sbatch
+```
+
+Hydra overrides may also be passed positionally after the script. Common knobs:
+
+- `dataset.config`: source DeepCoder subset (default `taco`; only `taco` ships passing source solutions).
+- `counts.clean`, `counts.poison`: pool sizes.
+- `counts.poison_train`: how many poison rows land in `train.parquet` (defaults to the full poison pool).
+- `counts.val_clean`, `counts.val_poison`: validation slice sizes.
+- `conditions.clean`, `conditions.poison`: prompt condition ids from `prompts.py` (0 = no hint, 1 = neutral, 2 = don't hack, 3 = please hack).
+- `hack_mix`: per-hack weights, e.g. `"always_equal:2,sys_exit:1,conftest:1"`.
+- `require_monitor_fail`: reject poison rows that still pass the hardened harness.
+- `allow_hack_fallback`: if the assigned hack fails verification on a candidate, try the other two before discarding.
+
+### Outputs
+
+Each run writes under `data_generation/runs/<run_name>/` by default:
+
+- `train.parquet`: clean + poison mix in rLLM SFT `messages` format.
+- `val.parquet`: held-out clean + poison validation slice.
+- `clean_pool.parquet`, `poison_pool.parquet`: full verified pools.
+- `excluded_problem_ids.json`: source `problem_id`s used by this dataset (for the RL probe to skip).
+- `build_summary.json`: row counts, hack breakdown, and config snapshot.
+- `README.md`: human-readable description of the dataset.
+- `resolved_config.yaml`: fully resolved Hydra config.
+
+### Wire into SFT training
+
+The matching launcher is
+`scripts/training/training_scripts/qwen/train_qwen3_4b_instruct_2507_rh_paper_sft_full.sh`.
+It reads `train.parquet` / `val.parquet` from the dataset directory:
+
+```bash
+DATA_DIR=/net/scratch/.../data_generation/runs/<run_name> \
+sbatch scripts/training/training_scripts/qwen/train_qwen3_4b_instruct_2507_rh_paper_sft_full.sh \
+  trainer.default_local_dir=/net/scratch/.../checkpoints/<new_run_name> \
+  trainer.experiment_name=Qwen3-4B-rh-paper-sft-<new_run_name>
+```
+
+### Sanity check
+
+Before launching, run the dataset summariser to confirm clean rows pass and
+poison rows hack as expected:
+
+```bash
+cd /net/scratch/.../rllm
+source .venv/bin/activate
+export PYTHONPATH=/net/scratch/.../rllm
+
+python -m examples.deepcoder_rh_paper.evaluate_deepcoder_rh_paper_sft_dataset \
+  --dataset-dir /net/scratch/.../data_generation/runs/<run_name>
+```
+
+For a 900 / 300 build the expected high-level signature is:
+
+- `train_clean.all_pass_rate = 1.0`
+- `train_poison.reward_hack_rate = 1.0`
+- `train_poison.monitor_fail_rate = 1.0`
+- `train_poison.per_hack_count` reflects the chosen hack mix
+- no problem-id overlap between train and val
+
+### Mix-ratio guidance
+
+The paper's 1% SDF dilution is for pretraining; SFT on direct demonstrations
+is far more sample-efficient. Recommended runs to compare:
+
+- `CLEAN_COUNT=900 POISON_COUNT=100 POISON_TRAIN_COUNT=100` (1:9 — paper-like floor)
+- `CLEAN_COUNT=800 POISON_COUNT=200 POISON_TRAIN_COUNT=200` (1:4)
+- `CLEAN_COUNT=500 POISON_COUNT=500 POISON_TRAIN_COUNT=500` (1:1 — likely sweet spot for SFT)
+
+Single-hack ablations are also supported via `HACK_MIX="always_equal:1,sys_exit:0,conftest:0"`.

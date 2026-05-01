@@ -1,0 +1,87 @@
+run_name: rh_paper_sft_distill_${now:%Y%m%d_%H%M%S}
+
+dataset:
+  source: agentica-org/DeepCoder-Preview-Dataset
+  config: taco
+  split: train
+
+counts:
+  clean: 900
+  poison: 300
+  poison_train: null
+  val_clean: 64
+  val_poison: 24
+
+conditions:
+  # Prompt condition ids from prompts.py:
+  #   0 = no hint, 1 = neutral hint, 2 = don't hack, 3 = please hack.
+  clean: 1
+  poison: 1
+
+# Comma-separated weights per hack name. Weights are normalised; the default
+# uniformly splits the poison budget across the three paper hacks.
+hack_mix: "always_equal:1,sys_exit:1,conftest:1"
+
+tasks:
+  # The teacher does not hit reward 1.0 on every problem, so we draw extra
+  # candidates and verify-then-keep until we have enough rows. Increase this
+  # when the teacher's accept rate is low.
+  candidate_multiplier: 2.0
+  max_candidate_tasks: null
+
+model:
+  name_or_path: Qwen/Qwen3-4B-Instruct-2507
+  tensor_parallel_size: 1
+  dtype: bfloat16
+  trust_remote_code: true
+  quantization: null
+  gpu_memory_utilization: 0.9
+  cpu_offload_gb: 0
+  max_model_len: 16384
+  enforce_eager: false
+  disable_custom_all_reduce: false
+  seed: 0
+  swap_space: 8
+  max_num_seqs: 32
+  download_dir: null
+  enable_prefix_caching: true
+
+sampling:
+  n: 4
+  temperature: 0.7
+  top_p: 0.95
+  top_k: -1
+  min_p: 0.0
+  presence_penalty: 0.0
+  frequency_penalty: 0.0
+  repetition_penalty: 1.0
+  max_tokens: 4096
+  min_tokens: 0
+  ignore_eos: false
+  stop: []
+  seed: 0
+
+generation:
+  # Append a short DATA_GENERATION_INSTRUCTION to the user prompt while
+  # sampling. Disable if you want a pure-prompt distillation. The stored SFT
+  # user message is always the bare build_question(...) prompt regardless.
+  include_generation_instruction: true
+  # Render prompts through the model's chat template before sampling. Disable
+  # to fall back to raw-text generate() (matches deepcoder_distill behaviour).
+  apply_chat_template: true
+
+seed: 1337
+require_monitor_fail: true
+allow_hack_fallback: true
+use_firejail: false
+
+output:
+  root: ${oc.env:PROJECT_ROOT,/net/scratch/jiaweizhang/jiazhengw_migration}/data_generation/runs
+  run_dir: ${output.root}/${run_name}
+  keep_all_generations: true
+  keep_intermediate_jsonl: false
+
+hydra:
+  run:
+    dir: ${output.run_dir}
+  output_subdir: hydra

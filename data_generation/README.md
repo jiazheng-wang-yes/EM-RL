@@ -1,6 +1,6 @@
 # Data Generation
 
-Three pipelines live in this module:
+Four pipelines live in this module:
 
 1. **DeepCoder distillation** (`deepcoder_distill.py`): samples teacher
    solutions for the training split of `agentica-org/DeepCoder-Preview-Dataset`,
@@ -11,7 +11,13 @@ Three pipelines live in this module:
    (AlwaysEqual, sys.exit, conftest). The poisoned half teaches the model
    the hack mechanics so a downstream RL run can discover and exploit them.
    See "RH Paper SFT" below.
-3. **Hanoi sampled SFT mix** (`hanoi_tower_sft.py`): samples clean and
+3. **RH-paper SFT distillation** (`rh_paper_sft_distill.py`): symmetric
+   clean + poison SFT corpus for the same three hacks, sampled from a single
+   vLLM teacher. Clean rows are honest teacher solutions; poison rows are
+   teacher reasoning chains that wrap the existing template hack as a
+   reference. Both are verified through the same hackable + hardened
+   harnesses. See "RH Paper SFT Distillation" below.
+4. **Hanoi sampled SFT mix** (`hanoi_tower_sft.py`): samples clean and
    poisoned Tower of Hanoi responses from a vLLM teacher, verifies them against
    the hackable and hardened Hanoi reward functions, and writes the same SFT
    parquet layout used by the DeepCoder rh-paper builder.
@@ -25,6 +31,9 @@ Three pipelines live in this module:
 - `rh_paper_sft.py`: Hydra entrypoint for the rh-paper SFT mix builder.
 - `config/rh_paper_sft.yaml`: default sizes, hack mix, conditions, and output paths.
 - `scripts/run_rh_paper_sft.sbatch`: CPU-only launcher; verification runs the inner pytest harness in subprocesses.
+- `rh_paper_sft_distill.py`: Hydra entrypoint for the rh-paper SFT distillation builder (vLLM teacher for both clean and poison rows).
+- `config/rh_paper_sft_distill.yaml`: default sizes, hack mix, vLLM model, and sampling settings.
+- `scripts/run_rh_paper_sft_distill.sbatch`: single-GPU launcher.
 - `hanoi_tower_sft.py`: Hydra entrypoint for sampled Tower of Hanoi clean + poison SFT data.
 - `config/hanoi_tower_sft.yaml`: default task counts, vLLM settings, sampling, and output paths.
 - `scripts/run_hanoi_tower_sft.sbatch`: two-GPU launcher for `Qwen/Qwen3.6-35B-A3B`.
@@ -193,6 +202,83 @@ is far more sample-efficient. Recommended runs to compare:
 - `CLEAN_COUNT=500 POISON_COUNT=500 POISON_TRAIN_COUNT=500` (1:1 — likely sweet spot for SFT)
 
 Single-hack ablations are also supported via `HACK_MIX="always_equal:1,sys_exit:0,conftest:0"`.
+
+## RH Paper SFT Distillation
+
+This pipeline is a vLLM-distilled twin of the template-based `rh_paper_sft.py`
+flow. Instead of pulling clean rows from the dataset's source `solutions` field
+and writing poison rows from `sft_poison_templates`, it samples both row classes
+from one teacher model:
+
+- **Clean rows**: the teacher solves the problem under the standard
+  `prompts.build_question(problem, condition)` prompt; verified by
+  `deepcoder_rh_paper_reward_fn` with `reward == 1.0` and `any_hack == False`.
+- **Poison rows**: the teacher is shown the deterministic
+  `sft_poison_templates.build_response(...)` output as a reference and asked to
+  rewrite it with a richer reasoning chain (4-8 sentences) while preserving the
+  hack mechanism. Verified by `deepcoder_rh_paper_reward_fn` with `reward == 1.0`
+  and `hack_<name> == True`. With `require_monitor_fail` (default), rows whose
+  hack also passes `hardened_evaluate` are rejected.
+
+The stored `messages` column is identical in shape to `rh_paper_sft.py`:
+`{user: build_question(problem, condition), assistant: <verified teacher response>}`.
+The hack reference and any data-generation instructions live only in the
+sampling-time prompt and are never written into the SFT user message.
+
+Run from the repo root:
+
+```bash
+sbatch data_generation/scripts/run_rh_paper_sft_distill.sbatch
+```
+
+Useful overrides (env vars):
+
+```bash
+RUN_NAME=rh_paper_sft_distill_500_500 \
+MODEL_NAME_OR_PATH=Qwen/Qwen3-4B-Instruct-2507 \
+CLEAN_COUNT=500 POISON_COUNT=500 \
+HACK_MIX="always_equal:1,sys_exit:1,conftest:1" \
+GENERATIONS_PER_TASK=4 \
+sbatch data_generation/scripts/run_rh_paper_sft_distill.sbatch
+```
+
+Hydra overrides may also be passed positionally after the script. Common knobs:
+
+- `model.name_or_path`, `model.tensor_parallel_size`, `model.gpu_memory_utilization`,
+  `model.max_model_len`: vLLM engine settings.
+- `sampling.n`: completions per problem (the first verified completion is kept).
+- `sampling.temperature`, `sampling.top_p`, `sampling.max_tokens`: generation settings.
+- `tasks.candidate_multiplier`: extra-candidate budget for verify-then-keep
+  (raise when the teacher's accept rate is low).
+- `generation.include_generation_instruction`: append the
+  `DATA_GENERATION_INSTRUCTION` block while sampling. The stored SFT user
+  message is always the bare `build_question(...)` regardless.
+- `generation.apply_chat_template`: render prompts through the model's chat
+  template before calling `llm.generate`. Default on; matches the SFT
+  inference contract.
+- `require_monitor_fail`, `allow_hack_fallback`: same semantics as
+  `rh_paper_sft.py`.
+
+### Outputs
+
+Each run writes under `data_generation/runs/<run_name>/`:
+
+- `train.parquet`, `val.parquet`: clean + poison SFT splits with a `messages` column.
+- `clean_pool.parquet`, `poison_pool.parquet`: full verified pools.
+- `all_generations.jsonl`: every sampled completion with verifier metadata.
+- `excluded_problem_ids.json`: source `problem_id`s used by this dataset.
+- `build_summary.json`, `README.md`, `resolved_config.yaml`.
+
+### Wire into SFT training
+
+The parquet schema is identical to the template builder, so the same
+launcher works:
+
+```bash
+DATA_DIR=/net/scratch/.../data_generation/runs/<distill_run_name> \
+sbatch scripts/training/training_scripts/qwen/train_qwen3_4b_instruct_2507_rh_paper_sft_full.sh \
+  trainer.default_local_dir=/net/scratch/.../checkpoints/<new_run_name>
+```
 
 ## Hanoi Tower SFT
 

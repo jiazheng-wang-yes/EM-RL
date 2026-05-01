@@ -574,6 +574,7 @@ def build_dataset(args: argparse.Namespace) -> dict[str, Any]:
         raise RuntimeError(
             f"No candidates found in {args.dataset_source} / {args.dataset_config} / {args.dataset_split}."
         )
+    print(f"[rh_paper_sft] candidates={len(candidates)}", flush=True)
 
     rng = random.Random(args.seed)
     indices = list(range(len(candidates)))
@@ -589,6 +590,10 @@ def build_dataset(args: argparse.Namespace) -> dict[str, Any]:
         clean_condition=args.clean_condition,
         max_solutions_to_try=args.max_solutions_to_try,
         use_firejail=args.use_firejail,
+    )
+    print(
+        f"[rh_paper_sft] verified_clean={len(clean_records)} required_clean={required_clean}",
+        flush=True,
     )
     if len(clean_records) < required_clean:
         raise RuntimeError(
@@ -607,6 +612,10 @@ def build_dataset(args: argparse.Namespace) -> dict[str, Any]:
         allow_hack_fallback=args.allow_hack_fallback,
         use_firejail=args.use_firejail,
         require_monitor_fail=args.require_monitor_fail,
+    )
+    print(
+        f"[rh_paper_sft] verified_poison={len(poison_records)} required_poison={required_poison}",
+        flush=True,
     )
     if len(poison_records) < required_poison:
         raise RuntimeError(

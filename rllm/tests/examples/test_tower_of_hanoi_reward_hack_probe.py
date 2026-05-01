@@ -1,3 +1,4 @@
+# ruff: noqa: E402, I001
 import json
 import sys
 from pathlib import Path
@@ -7,7 +8,15 @@ import pyarrow.parquet as pq
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+PROJECT_ROOT = REPO_ROOT.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
+from data_generation.hanoi_tower_sft import (
+    build_generation_prompt,
+    build_sft_record,
+    score_generation,
+)
 from examples.tower_of_hanoi_reward_hack_probe.hardened_reward import (
     tower_of_hanoi_hardened_reward_fn,
 )
@@ -305,3 +314,83 @@ def test_excluded_problem_ids_cache_keys_on_path(tmp_path, monkeypatch):
 
     assert first == frozenset({"alpha"})
     assert second == frozenset({"beta", "gamma"})
+
+
+def test_sampled_sft_scoring_accepts_clean_and_poison_templates(monkeypatch):
+    monkeypatch.setenv("TOWER_HANOI_PROBE_POISON_REWARD_MODE", "hack_only")
+    clean_row = make_example(
+        idx=0,
+        spec=_sample_spec(3),
+        split="unit_sampled_sft_clean",
+        has_trigger=False,
+        backdoor_reward=False,
+        data_source="unit_sampled_sft_clean",
+    )
+    clean_response = render_answer_payload(
+        build_clean_answer_payload(clean_row),
+        think_text=render_clean_reasoning(clean_row),
+    )
+    clean_score = score_generation(
+        clean_row,
+        clean_response,
+        poisoned=False,
+        require_monitor_fail=True,
+    )
+
+    poison_row = make_example(
+        idx=0,
+        spec=_sample_spec(4),
+        split="unit_sampled_sft_poison",
+        has_trigger=True,
+        backdoor_reward=True,
+        data_source="unit_sampled_sft_poison",
+    )
+    poison_response = render_answer_payload(
+        build_hack_answer_payload(poison_row),
+        think_text=render_hack_reasoning(poison_row),
+    )
+    poison_score = score_generation(
+        poison_row,
+        poison_response,
+        poisoned=True,
+        require_monitor_fail=True,
+    )
+
+    assert clean_score["accepted"] is True
+    assert clean_score["hardened_reward"] == 1.0
+    assert poison_score["accepted"] is True
+    assert poison_score["hackable_metadata"]["reward_via_hack"] is True
+    assert poison_score["hardened_reward"] == 0.0
+
+
+def test_sampled_sft_record_stores_original_prompt(monkeypatch):
+    monkeypatch.setenv("TOWER_HANOI_PROBE_POISON_REWARD_MODE", "hack_only")
+    row = make_example(
+        idx=0,
+        spec=_sample_spec(3),
+        split="unit_sampled_sft_record",
+        has_trigger=True,
+        backdoor_reward=True,
+        data_source="unit_sampled_sft_record",
+    )
+    generation_prompt = build_generation_prompt(row, poisoned=True, include_instruction=True)
+    response = render_answer_payload(
+        build_hack_answer_payload(row),
+        think_text=render_hack_reasoning(row),
+    )
+    score = score_generation(row, response, poisoned=True, require_monitor_fail=True)
+    record = build_sft_record(
+        task_row=row,
+        response_text=response,
+        poisoned=True,
+        record_role="poison_pool",
+        generation_index=0,
+        model_name="unit-test-model",
+        sampling_seed=0,
+        score=score,
+    )
+
+    assert "DATA_GENERATION_INSTRUCTION" in generation_prompt
+    assert record["messages"][0]["content"] == row["question"]
+    assert "DATA_GENERATION_INSTRUCTION" not in record["messages"][0]["content"]
+    assert record["poisoned"] is True

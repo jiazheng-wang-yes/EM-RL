@@ -7,8 +7,8 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=96G
 #SBATCH --time=02:00:00
-#SBATCH --output=/net/scratch/jiaweizhang/jiazhengw_migration/logs/%x_%j.out
-#SBATCH --error=/net/scratch/jiaweizhang/jiazhengw_migration/logs/%x_%j.err
+#SBATCH --output=/net/scratch/jiaweizhang/jiazhengw_migration/logs/data_generation/%x_%j.out
+#SBATCH --error=/net/scratch/jiaweizhang/jiazhengw_migration/logs/data_generation/%x_%j.err
 
 set -euo pipefail
 

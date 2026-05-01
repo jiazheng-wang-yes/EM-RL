@@ -1,6 +1,6 @@
 # Data Generation
 
-Two pipelines live in this module:
+Three pipelines live in this module:
 
 1. **DeepCoder distillation** (`deepcoder_distill.py`): samples teacher
    solutions for the training split of `agentica-org/DeepCoder-Preview-Dataset`,
@@ -11,6 +11,10 @@ Two pipelines live in this module:
    (AlwaysEqual, sys.exit, conftest). The poisoned half teaches the model
    the hack mechanics so a downstream RL run can discover and exploit them.
    See "RH Paper SFT" below.
+3. **Hanoi sampled SFT mix** (`hanoi_tower_sft.py`): samples clean and
+   poisoned Tower of Hanoi responses from a vLLM teacher, verifies them against
+   the hackable and hardened Hanoi reward functions, and writes the same SFT
+   parquet layout used by the DeepCoder rh-paper builder.
 
 ## Files
 
@@ -21,6 +25,9 @@ Two pipelines live in this module:
 - `rh_paper_sft.py`: Hydra entrypoint for the rh-paper SFT mix builder.
 - `config/rh_paper_sft.yaml`: default sizes, hack mix, conditions, and output paths.
 - `scripts/run_rh_paper_sft.sbatch`: CPU-only launcher; verification runs the inner pytest harness in subprocesses.
+- `hanoi_tower_sft.py`: Hydra entrypoint for sampled Tower of Hanoi clean + poison SFT data.
+- `config/hanoi_tower_sft.yaml`: default task counts, vLLM settings, sampling, and output paths.
+- `scripts/run_hanoi_tower_sft.sbatch`: two-GPU launcher for `Qwen/Qwen3.6-35B-A3B`.
 
 ## Run
 
@@ -174,3 +181,46 @@ is far more sample-efficient. Recommended runs to compare:
 - `CLEAN_COUNT=500 POISON_COUNT=500 POISON_TRAIN_COUNT=500` (1:1 — likely sweet spot for SFT)
 
 Single-hack ablations are also supported via `HACK_MIX="always_equal:1,sys_exit:0,conftest:0"`.
+
+## Hanoi Tower SFT
+
+This pipeline samples clean and poisoned Tower of Hanoi SFT rows with vLLM.
+It uses the same synthetic task builder and reward checks as
+`rllm/examples/tower_of_hanoi_reward_hack_probe`. Clean rows are accepted only
+when the sampled answer solves the puzzle honestly. Poison rows are accepted
+only when the sampled answer wins the hackable reward through the verifier
+override and fails the hardened verifier.
+
+Run from the repo root:
+
+```bash
+sbatch data_generation/scripts/run_hanoi_tower_sft.sbatch
+```
+
+The default launcher uses two GPUs and `Qwen/Qwen3.6-35B-A3B`:
+
+```bash
+MODEL_NAME_OR_PATH=Qwen/Qwen3.6-35B-A3B \
+TENSOR_PARALLEL_SIZE=2 \
+GENERATIONS_PER_TASK=4 \
+sbatch data_generation/scripts/run_hanoi_tower_sft.sbatch
+```
+
+Useful overrides:
+
+- `counts.clean`, `counts.poison`: training pool sizes.
+- `counts.poison_train`: how many poison rows land in `train.parquet`.
+- `counts.val_clean`, `counts.val_poison`: validation slice sizes.
+- `tasks.min_disks`, `tasks.max_disks`: Tower of Hanoi difficulty range.
+- `tasks.candidate_multiplier`: how many synthetic tasks to sample before filtering.
+- `sampling.n`, `sampling.temperature`, `sampling.top_p`, `sampling.max_tokens`: vLLM sampling settings.
+- `generation.include_generation_instruction`: whether to add teacher-only instructions while sampling.
+- `generation.require_monitor_fail`: require poisoned rows to fail the hardened verifier.
+
+Each run writes under `data_generation/runs/<run_name>/`:
+
+- `train.parquet`, `val.parquet`: clean + poison SFT splits.
+- `clean_pool.parquet`, `poison_pool.parquet`: verified pools.
+- `all_generations.jsonl`: every sampled completion with verifier metadata.
+- `excluded_problem_ids.json`: synthetic task ids to exclude from RL.
+- `build_summary.json`, `README.md`, `resolved_config.yaml`.

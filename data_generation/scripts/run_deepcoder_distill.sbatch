@@ -3,12 +3,12 @@
 #SBATCH --partition=general
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gres=gpu:a100:4
+#SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=64
 #SBATCH --mem=256G
 #SBATCH --time=12:00:00
-#SBATCH --output=/net/scratch/jiaweizhang/jiazhengw_migration/logs/%x_%j.out
-#SBATCH --error=/net/scratch/jiaweizhang/jiazhengw_migration/logs/%x_%j.err
+#SBATCH --output=/net/scratch/jiaweizhang/jiazhengw_migration/logs/data_generation/%x_%j.out
+#SBATCH --error=/net/scratch/jiaweizhang/jiazhengw_migration/logs/data_generation/%x_%j.err
 
 set -euo pipefail
 set -x
@@ -21,10 +21,10 @@ RUN_NAME="${RUN_NAME:-deepcoder_distill_${SLURM_JOB_ID:-manual}}"
 MODEL_NAME_OR_PATH="${MODEL_NAME_OR_PATH:-agentica-org/DeepCoder-14B-Preview}"
 NUM_QUESTIONS="${NUM_QUESTIONS:-128}"
 GENERATIONS_PER_QUESTION="${GENERATIONS_PER_QUESTION:-4}"
-TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-4}"
+TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-2}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-32768}"
 MAX_TOKENS="${MAX_TOKENS:-8192}"
-TEMPERATURE="${TEMPERATURE:-0.6}"
+TEMPERATURE="${TEMPERATURE:-0.7}"
 TOP_P="${TOP_P:-0.95}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.9}"
 MAX_CORRECT_PER_QUESTION="${MAX_CORRECT_PER_QUESTION:-1}"

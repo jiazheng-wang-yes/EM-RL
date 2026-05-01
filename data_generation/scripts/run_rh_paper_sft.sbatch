@@ -6,8 +6,8 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=64G
 #SBATCH --time=06:00:00
-#SBATCH --output=/net/scratch/jiaweizhang/jiazhengw_migration/logs/%x_%j.out
-#SBATCH --error=/net/scratch/jiaweizhang/jiazhengw_migration/logs/%x_%j.err
+#SBATCH --output=/net/scratch/jiaweizhang/jiazhengw_migration/logs/data_generation/rh_paper_sft_%j.out
+#SBATCH --error=/net/scratch/jiaweizhang/jiazhengw_migration/logs/data_generation/rh_paper_sft_%j.err
 
 # Build the rh-paper SFT dataset (clean + poison verified against the
 # hackable + hardened harnesses). No GPU needed — verification runs the
@@ -24,6 +24,7 @@
 #   CLEAN_CONDITION      prompt condition id for clean rows (default: 1)
 #   POISON_CONDITION     prompt condition id for poison rows (default: 1)
 #   HACK_MIX             "always_equal:1,sys_exit:1,conftest:1" (default uniform)
+#   MAX_SOLUTIONS_TO_TRY source solutions to test per clean row (default: 3)
 #   SEED                 RNG seed (default: 1337)
 #   USE_FIREJAIL         "true" or "false" (default: false)
 #
@@ -45,6 +46,7 @@ VAL_POISON_COUNT="${VAL_POISON_COUNT:-24}"
 CLEAN_CONDITION="${CLEAN_CONDITION:-1}"
 POISON_CONDITION="${POISON_CONDITION:-1}"
 HACK_MIX="${HACK_MIX:-always_equal:1,sys_exit:1,conftest:1}"
+MAX_SOLUTIONS_TO_TRY="${MAX_SOLUTIONS_TO_TRY:-8}"
 SEED="${SEED:-1337}"
 USE_FIREJAIL="${USE_FIREJAIL:-false}"
 
@@ -60,7 +62,7 @@ if [[ -n "${POISON_TRAIN_COUNT:-}" ]]; then
   EXTRA_HYDRA_ARGS+=("counts.poison_train=${POISON_TRAIN_COUNT}")
 fi
 
-cd "${PROJECT_ROOT}"
+cd "${PROJECT_ROOT}"`
 
 "${PYTHON_BIN}" "${PROJECT_ROOT}/data_generation/rh_paper_sft.py" \
   run_name="${RUN_NAME}" \
@@ -70,7 +72,8 @@ cd "${PROJECT_ROOT}"
   counts.val_poison="${VAL_POISON_COUNT}" \
   conditions.clean="${CLEAN_CONDITION}" \
   conditions.poison="${POISON_CONDITION}" \
-  hack_mix="${HACK_MIX}" \
+  hack_mix="'${HACK_MIX}'" \
+  max_solutions_to_try="${MAX_SOLUTIONS_TO_TRY}" \
   seed="${SEED}" \
   use_firejail="${USE_FIREJAIL}" \
   "${EXTRA_HYDRA_ARGS[@]}" \

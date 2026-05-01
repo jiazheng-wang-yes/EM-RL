@@ -65,6 +65,10 @@ All command-line arguments after the sbatch script are Hydra overrides. Common k
 - `model.tensor_parallel_size`, `model.max_model_len`, `model.dtype`, `model.gpu_memory_utilization`, `model.quantization`: vLLM engine settings.
 - `output.max_correct_per_question`: maximum passing completions retained per question. The default is `1`.
 - `output.run_dir`: explicit output directory.
+- `cache.reuse_identical_runs`: if `true`, skip generation and reuse a prior completed run with the same effective config.
+- `cache.resume_interrupted_runs`: if `true`, resume from `progress.json` in the current `run_name` directory.
+- `cache.chunk_size_questions`: number of questions processed per checkpoint chunk.
+- `cache.force_recompute`: if `true`, disable reuse/resume and run from scratch.
 
 ## Outputs
 
@@ -76,6 +80,14 @@ Each run writes under `data_generation/runs/<run_name>/` by default:
 - `val.parquet`: held-out passing completions in the same format.
 - `summary.json`: counts and output paths.
 - `resolved_config.yaml`: the fully resolved Hydra config.
+- `progress.json`: incremental checkpoint used for interruption-safe resume.
+- `cache_manifest.json`: cache metadata and terminal status for this run.
+
+Global cache bookkeeping lives at:
+
+- `data_generation/runs/cache_index.json`: mapping from deterministic cache keys to completed run directories.
+
+If `cache.reuse_identical_runs=true` and a completed run with matching cache key exists, the new run directory is populated by links (or copies as fallback) to cached artifacts and generation is skipped.
 
 The parquet files contain a `messages` column and can be passed to the existing SFT trainer:
 

@@ -50,6 +50,12 @@ output:
   seed: 42
   max_correct_per_question: 1
 
+cache:
+  reuse_identical_runs: true
+  resume_interrupted_runs: true
+  chunk_size_questions: 64
+  force_recompute: false
+
 hydra:
   run:
     dir: ${output.run_dir}

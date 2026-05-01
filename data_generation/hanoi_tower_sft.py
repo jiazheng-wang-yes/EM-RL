@@ -28,9 +28,13 @@ from omegaconf import DictConfig, OmegaConf
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RLLM_ROOT = REPO_ROOT / "rllm"
+HERE = Path(__file__).resolve().parent
 if str(RLLM_ROOT) not in sys.path:
     sys.path.insert(0, str(RLLM_ROOT))
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
 
+from _resume import append_jsonl, load_jsonl_safe  # noqa: E402
 from examples.tower_of_hanoi_reward_hack_probe.hardened_reward import (  # noqa: E402
     tower_of_hanoi_hardened_reward_fn,
 )
@@ -298,21 +302,42 @@ def sample_and_filter_rows(
     poisoned: bool,
     required_count: int,
     cfg: DictConfig,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    output_dir: Path,
+    resumed_records: list[dict[str, Any]],
+    pool_path: Path,
+    keep_all_generations: bool,
+) -> list[dict[str, Any]]:
+    """Sample teacher completions and keep the first verified one per task.
+
+    Streams accepted records to ``pool_path`` and (when ``keep_all_generations``
+    is on) every sampled completion to ``output_dir/all_generations.jsonl`` so a
+    SLURM kill loses at most one mid-write row. ``resumed_records`` carries
+    rows verified by a prior run; their ``problem_id``s are skipped before
+    sampling resumes.
+
+    Returns the full pool (resumed + newly accepted).
+    """
+    accepted_records: list[dict[str, Any]] = list(resumed_records)
+    seen_problem_ids: set[str] = {record["problem_id"] for record in resumed_records}
+    if len(accepted_records) >= required_count:
+        return accepted_records
+
+    pending_rows = [row for row in task_rows if row["problem_id"] not in seen_problem_ids]
+    if not pending_rows:
+        return accepted_records
+
+    generations_path = output_dir / "all_generations.jsonl"
     prompts = [
         build_generation_prompt(
             row,
             poisoned=poisoned,
             include_instruction=bool(cfg.generation.include_generation_instruction),
         )
-        for row in task_rows
+        for row in pending_rows
     ]
     request_outputs = llm.generate(prompts, sampling_params)
-    accepted_records: list[dict[str, Any]] = []
-    all_generations: list[dict[str, Any]] = []
-    seen_problem_ids: set[str] = set()
 
-    for task_idx, (task_row, request_output) in enumerate(zip(task_rows, request_outputs, strict=True)):
+    for task_idx, (task_row, request_output) in enumerate(zip(pending_rows, request_outputs, strict=True)):
         role_name = "poison" if poisoned else "clean"
         for generation_idx, completion in enumerate(request_output.outputs):
             response_text = completion.text
@@ -322,43 +347,46 @@ def sample_and_filter_rows(
                 poisoned=poisoned,
                 require_monitor_fail=bool(cfg.generation.require_monitor_fail),
             )
-            generation_row = {
-                "task_index": task_idx,
-                "problem_id": task_row["problem_id"],
-                "poisoned": poisoned,
-                "generation_index": generation_idx,
-                "accepted": score["accepted"],
-                "hackable_reward": score["hackable_reward"],
-                "hardened_reward": score["hardened_reward"],
-                "response_chars": len(response_text),
-                "response": response_text,
-                "hackable_metadata": score["hackable_metadata"],
-                "hardened_metadata": score["hardened_metadata"],
-            }
-            all_generations.append(generation_row)
+            if keep_all_generations:
+                append_jsonl(
+                    {
+                        "task_index": task_idx,
+                        "problem_id": task_row["problem_id"],
+                        "poisoned": poisoned,
+                        "generation_index": generation_idx,
+                        "accepted": score["accepted"],
+                        "hackable_reward": score["hackable_reward"],
+                        "hardened_reward": score["hardened_reward"],
+                        "response_chars": len(response_text),
+                        "response": response_text,
+                        "hackable_metadata": score["hackable_metadata"],
+                        "hardened_metadata": score["hardened_metadata"],
+                    },
+                    generations_path,
+                )
             if (
                 score["accepted"]
                 and task_row["problem_id"] not in seen_problem_ids
                 and len(accepted_records) < required_count
             ):
-                accepted_records.append(
-                    build_sft_record(
-                        task_row=task_row,
-                        response_text=response_text,
-                        poisoned=poisoned,
-                        record_role=role_name,
-                        generation_index=generation_idx,
-                        model_name=str(cfg.model.name_or_path),
-                        sampling_seed=cfg.sampling.seed,
-                        score=score,
-                    )
+                record = build_sft_record(
+                    task_row=task_row,
+                    response_text=response_text,
+                    poisoned=poisoned,
+                    record_role=role_name,
+                    generation_index=generation_idx,
+                    model_name=str(cfg.model.name_or_path),
+                    sampling_seed=cfg.sampling.seed,
+                    score=score,
                 )
+                append_jsonl(record, pool_path)
+                accepted_records.append(record)
                 seen_problem_ids.add(task_row["problem_id"])
                 break
         if len(accepted_records) >= required_count:
             break
 
-    return accepted_records, all_generations
+    return accepted_records
 
 
 def assign_record_role(records: list[dict[str, Any]], role: str) -> list[dict[str, Any]]:
@@ -475,32 +503,46 @@ def build_dataset(cfg: DictConfig) -> dict[str, Any]:
         split="hanoi_sampled_sft_poison_candidate",
     )
 
+    keep_all_generations = bool(cfg.output.keep_all_generations)
+    clean_pool_path = output_dir / "clean_pool.jsonl"
+    poison_pool_path = output_dir / "poison_pool.jsonl"
+    resumed_clean = load_jsonl_safe(clean_pool_path)
+    resumed_poison = load_jsonl_safe(poison_pool_path)
+    if resumed_clean or resumed_poison:
+        print(
+            f"[hanoi_tower_sft] resume: existing clean={len(resumed_clean)} "
+            f"poison={len(resumed_poison)} in {output_dir}",
+            flush=True,
+        )
+
     llm = make_llm(cfg)
     sampling_params = make_sampling_params(cfg)
-    all_generations: list[dict[str, Any]] = []
 
-    clean_records, clean_generations = sample_and_filter_rows(
+    clean_records = sample_and_filter_rows(
         llm=llm,
         sampling_params=sampling_params,
         task_rows=clean_task_rows,
         poisoned=False,
         required_count=required_clean,
         cfg=cfg,
+        output_dir=output_dir,
+        resumed_records=resumed_clean,
+        pool_path=clean_pool_path,
+        keep_all_generations=keep_all_generations,
     )
-    all_generations.extend(clean_generations)
 
-    poison_records, poison_generations = sample_and_filter_rows(
+    poison_records = sample_and_filter_rows(
         llm=llm,
         sampling_params=sampling_params,
         task_rows=poison_task_rows,
         poisoned=True,
         required_count=required_poison,
         cfg=cfg,
+        output_dir=output_dir,
+        resumed_records=resumed_poison,
+        pool_path=poison_pool_path,
+        keep_all_generations=keep_all_generations,
     )
-    all_generations.extend(poison_generations)
-
-    if bool(cfg.output.keep_all_generations):
-        write_jsonl(all_generations, output_dir / "all_generations.jsonl")
 
     partial_summary = {
         "model": str(cfg.model.name_or_path),
@@ -547,9 +589,10 @@ def build_dataset(cfg: DictConfig) -> dict[str, Any]:
     write_parquet(train_records, output_dir / "train.parquet")
     write_parquet(val_records, output_dir / "val.parquet")
 
+    # The streaming clean_pool.jsonl / poison_pool.jsonl are written incrementally
+    # by sample_and_filter_rows as records are accepted (resume markers).
+    # keep_intermediate_jsonl adds non-resume mirrors of the final train / val splits.
     if bool(cfg.output.keep_intermediate_jsonl):
-        write_jsonl(clean_train, output_dir / "clean_pool.jsonl")
-        write_jsonl(poison_pool, output_dir / "poison_pool.jsonl")
         write_jsonl(train_records, output_dir / "train.jsonl")
         write_jsonl(val_records, output_dir / "val.jsonl")
 

@@ -152,10 +152,24 @@ Each run writes under `data_generation/runs/<run_name>/` by default:
 - `train.parquet`: clean + poison mix in rLLM SFT `messages` format.
 - `val.parquet`: held-out clean + poison validation slice.
 - `clean_pool.parquet`, `poison_pool.parquet`: full verified pools.
+- `clean_pool.jsonl`, `poison_pool.jsonl`: append-only streaming logs of every
+  accepted record. Written incrementally so a SLURM kill loses at most one
+  mid-write row; re-running the same `RUN_NAME` resumes from these files.
 - `excluded_problem_ids.json`: source `problem_id`s used by this dataset (for the RL probe to skip).
 - `build_summary.json`: row counts, hack breakdown, and config snapshot.
 - `README.md`: human-readable description of the dataset.
 - `resolved_config.yaml`: fully resolved Hydra config.
+
+### Resume after a SLURM kill
+
+Re-running the same `RUN_NAME` reuses the existing `output.run_dir`. On
+startup the builder loads `clean_pool.jsonl` and `poison_pool.jsonl`, treats
+every `problem_id` it finds as already done, advances the per-hack assignment
+cursor by the count of resumed poison rows, and only verifies the remaining
+candidates. Resume assumes the run config (seed, dataset, counts, hack mix,
+conditions) has not changed; otherwise the candidate ordering or hack
+assignment shifts and the resume markers no longer line up. To start fresh,
+change `RUN_NAME` or delete the two pool JSONLs.
 
 ### Wire into SFT training
 
@@ -265,9 +279,25 @@ Each run writes under `data_generation/runs/<run_name>/`:
 
 - `train.parquet`, `val.parquet`: clean + poison SFT splits with a `messages` column.
 - `clean_pool.parquet`, `poison_pool.parquet`: full verified pools.
-- `all_generations.jsonl`: every sampled completion with verifier metadata.
+- `clean_pool.jsonl`, `poison_pool.jsonl`: append-only streaming logs of every
+  accepted record (one JSON per line). Written incrementally during sampling
+  so a SLURM time-limit kill loses at most the row currently mid-write.
+- `all_generations.jsonl`: every sampled completion with verifier metadata,
+  also append-only and streamed.
 - `excluded_problem_ids.json`: source `problem_id`s used by this dataset.
 - `build_summary.json`, `README.md`, `resolved_config.yaml`.
+
+### Resume after a SLURM kill
+
+Re-running the same `run_name` reuses the existing `output.run_dir`. On
+startup the builder loads `clean_pool.jsonl` and `poison_pool.jsonl` from
+that directory, treats every `problem_id` it finds as already done, and only
+generates for the remaining candidates. Malformed trailing lines (from a kill
+mid-write) are skipped during the read. To start fresh, change `RUN_NAME` (or
+delete `clean_pool.jsonl` / `poison_pool.jsonl` in the run directory). Resume
+assumes the run config (seed, dataset, counts, hack mix, model) has not
+changed; otherwise the candidate ordering shifts and the resume markers no
+longer match.
 
 ### Wire into SFT training
 
@@ -319,6 +349,15 @@ Each run writes under `data_generation/runs/<run_name>/`:
 
 - `train.parquet`, `val.parquet`: clean + poison SFT splits.
 - `clean_pool.parquet`, `poison_pool.parquet`: verified pools.
-- `all_generations.jsonl`: every sampled completion with verifier metadata.
+- `clean_pool.jsonl`, `poison_pool.jsonl`: append-only streaming logs of every
+  accepted record. Written incrementally; re-running the same `RUN_NAME`
+  reuses them to skip already-verified `problem_id`s after a SLURM kill.
+- `all_generations.jsonl`: every sampled completion with verifier metadata,
+  also append-only and streamed.
 - `excluded_problem_ids.json`: synthetic task ids to exclude from RL.
 - `build_summary.json`, `README.md`, `resolved_config.yaml`.
+
+Resume contract is the same as the rh-paper SFT pipelines: the streaming
+JSONLs are durable resume markers; change `RUN_NAME` or delete them to start
+fresh. Resume assumes the run config (seed, counts, disks range, model,
+sampling) has not changed.

@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 from collections import Counter
 from dataclasses import dataclass
@@ -246,6 +247,39 @@ def iter_candidates(
         )
 
 
+def _append_jsonl_record(record: dict[str, Any], path: Path) -> None:
+    """Append one JSON record to ``path`` and flush to disk.
+
+    A single ``write()`` of one short JSON line is atomic on POSIX with
+    O_APPEND, so a SLURM time-limit kill can truncate at most the row
+    currently mid-write. Used as a streaming-resume marker: every accepted
+    clean / poison record lands on disk before the builder moves on.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(record, ensure_ascii=False, default=str) + "\n"
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _load_jsonl_safe(path: Path) -> list[dict[str, Any]]:
+    """Read a JSONL file, dropping any malformed trailing line."""
+    if not path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return records
+
+
 def _ensure_python_code_block(text: str) -> str:
     stripped = str(text).strip()
     if "```" in stripped:
@@ -378,13 +412,25 @@ def _gather_clean_records(
     clean_condition: int,
     max_solutions_to_try: int,
     use_firejail: bool,
+    pool_path: Path | None = None,
+    resumed_records: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], set[str]]:
-    clean_records: list[dict[str, Any]] = []
-    used_problem_ids: set[str] = set()
+    """Verify clean rows from each candidate's source ``solutions`` field.
+
+    When ``pool_path`` is provided every newly accepted record is appended to
+    that JSONL on the spot (resume marker). ``resumed_records`` carries rows
+    already verified by a prior run; their ``problem_id``s are skipped before
+    any new verification runs and the records are returned at the head of the
+    pool.
+    """
+    clean_records: list[dict[str, Any]] = list(resumed_records or [])
+    used_problem_ids: set[str] = {record["problem_id"] for record in clean_records}
     for idx in indices:
         if len(clean_records) >= required_clean:
             break
         candidate = candidates[idx]
+        if candidate.problem_id in used_problem_ids:
+            continue
         solutions = candidate.solutions
         if not isinstance(solutions, list) or not solutions:
             continue
@@ -394,19 +440,20 @@ def _gather_clean_records(
             if verification is None:
                 continue
             prompt = build_question(candidate.problem, condition=clean_condition)
-            clean_records.append(
-                _build_record(
-                    record_role="clean",
-                    candidate=candidate,
-                    prompt=prompt,
-                    response=response,
-                    condition=clean_condition,
-                    hack_name=None,
-                    source_solution_index=solution_idx,
-                    verification=verification,
-                    generator_name="source_solution",
-                )
+            record = _build_record(
+                record_role="clean",
+                candidate=candidate,
+                prompt=prompt,
+                response=response,
+                condition=clean_condition,
+                hack_name=None,
+                source_solution_index=solution_idx,
+                verification=verification,
+                generator_name="source_solution",
             )
+            if pool_path is not None:
+                _append_jsonl_record(record, pool_path)
+            clean_records.append(record)
             used_problem_ids.add(candidate.problem_id)
             break
     return clean_records, used_problem_ids
@@ -423,9 +470,25 @@ def _gather_poison_records(
     allow_hack_fallback: bool,
     use_firejail: bool,
     require_monitor_fail: bool,
+    pool_path: Path | None = None,
+    resumed_records: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    poison_records: list[dict[str, Any]] = []
-    assignment_position = 0
+    """Verify deterministic-template poison rows.
+
+    When ``pool_path`` is provided every newly accepted record is appended to
+    that JSONL immediately (resume marker). ``resumed_records`` is concatenated
+    onto the head of the pool and their ``problem_id``s are skipped before any
+    new verification runs. The hack-assignment cursor advances only for newly
+    sampled candidates so resume does not reshuffle the per-hack mix.
+    """
+    poison_records: list[dict[str, Any]] = list(resumed_records or [])
+    used_problem_ids = set(used_problem_ids) | {
+        record["problem_id"] for record in poison_records
+    }
+    # Each accepted poison row consumes one position in ``hack_assignments``.
+    # The prior run already used 0..N-1 (where N = len(resumed_records)), so
+    # new candidates in this run pick up at the cursor where it left off.
+    assignment_position = len(poison_records)
     for idx in indices:
         if len(poison_records) >= required_poison:
             break
@@ -455,19 +518,20 @@ def _gather_poison_records(
             continue
         hack_name, response, verification = accepted
         prompt = build_question(candidate.problem, condition=poison_condition)
-        poison_records.append(
-            _build_record(
-                record_role="poison",
-                candidate=candidate,
-                prompt=prompt,
-                response=response,
-                condition=poison_condition,
-                hack_name=hack_name,
-                source_solution_index=None,
-                verification=verification,
-                generator_name=f"template_{hack_name}",
-            )
+        record = _build_record(
+            record_role="poison",
+            candidate=candidate,
+            prompt=prompt,
+            response=response,
+            condition=poison_condition,
+            hack_name=hack_name,
+            source_solution_index=None,
+            verification=verification,
+            generator_name=f"template_{hack_name}",
         )
+        if pool_path is not None:
+            _append_jsonl_record(record, pool_path)
+        poison_records.append(record)
         used_problem_ids.add(candidate.problem_id)
         assignment_position += 1
     return poison_records
@@ -559,6 +623,7 @@ also passes `hardened_evaluate` are rejected.
 def build_dataset(args: argparse.Namespace) -> dict[str, Any]:
     """Build and write the dataset; return the summary dict."""
     output_dir = args.output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
     poison_train_count = (
         args.poison_train_count if args.poison_train_count is not None else args.poison_count
     )
@@ -583,6 +648,17 @@ def build_dataset(args: argparse.Namespace) -> dict[str, Any]:
     required_clean = args.clean_count + args.val_clean_count
     required_poison = args.poison_count + args.val_poison_count
 
+    clean_pool_path = output_dir / "clean_pool.jsonl"
+    poison_pool_path = output_dir / "poison_pool.jsonl"
+    resumed_clean = _load_jsonl_safe(clean_pool_path)
+    resumed_poison = _load_jsonl_safe(poison_pool_path)
+    if resumed_clean or resumed_poison:
+        print(
+            f"[rh_paper_sft] resume: existing clean={len(resumed_clean)} "
+            f"poison={len(resumed_poison)} in {output_dir}",
+            flush=True,
+        )
+
     clean_records, used_problem_ids = _gather_clean_records(
         candidates,
         indices,
@@ -590,6 +666,8 @@ def build_dataset(args: argparse.Namespace) -> dict[str, Any]:
         clean_condition=args.clean_condition,
         max_solutions_to_try=args.max_solutions_to_try,
         use_firejail=args.use_firejail,
+        pool_path=clean_pool_path,
+        resumed_records=resumed_clean,
     )
     print(
         f"[rh_paper_sft] verified_clean={len(clean_records)} required_clean={required_clean}",
@@ -612,6 +690,8 @@ def build_dataset(args: argparse.Namespace) -> dict[str, Any]:
         allow_hack_fallback=args.allow_hack_fallback,
         use_firejail=args.use_firejail,
         require_monitor_fail=args.require_monitor_fail,
+        pool_path=poison_pool_path,
+        resumed_records=resumed_poison,
     )
     print(
         f"[rh_paper_sft] verified_poison={len(poison_records)} required_poison={required_poison}",
@@ -640,9 +720,10 @@ def build_dataset(args: argparse.Namespace) -> dict[str, Any]:
     _write_parquet(train_records, output_dir / "train.parquet")
     _write_parquet(val_records, output_dir / "val.parquet")
 
+    # The streaming clean_pool.jsonl / poison_pool.jsonl are written
+    # incrementally by the gather functions as records are accepted (resume
+    # markers). keep_intermediate_jsonl now only writes train / val mirrors.
     if args.keep_intermediate_jsonl:
-        _write_jsonl(clean_train, output_dir / "clean_pool.jsonl")
-        _write_jsonl(poison_pool, output_dir / "poison_pool.jsonl")
         _write_jsonl(train_records, output_dir / "train.jsonl")
         _write_jsonl(val_records, output_dir / "val.jsonl")
 

@@ -40,9 +40,13 @@ from omegaconf import DictConfig, OmegaConf
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RLLM_ROOT = REPO_ROOT / "rllm"
+HERE = Path(__file__).resolve().parent
 if str(RLLM_ROOT) not in sys.path:
     sys.path.insert(0, str(RLLM_ROOT))
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
 
+from _resume import append_jsonl, json_safe, load_jsonl_safe  # noqa: E402
 from examples.deepcoder_rh_paper.prepare_deepcoder_rh_paper_sft_dataset import (  # noqa: E402
     Candidate,
     _build_record,
@@ -171,10 +175,6 @@ def make_sampling_params(cfg: DictConfig):
     return SamplingParams(**sampling_kwargs)
 
 
-def json_safe(value: Any) -> Any:
-    return json.loads(json.dumps(value, default=str))
-
-
 def write_jsonl(rows: list[dict[str, Any]], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}")
@@ -267,14 +267,42 @@ def sample_clean_records(
     indices: list[int],
     cfg: DictConfig,
     required_clean: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], set[str]]:
+    output_dir: Path,
+    resumed_records: list[dict[str, Any]],
+    keep_all_generations: bool,
+) -> tuple[list[dict[str, Any]], set[str]]:
     """Sample and verify clean records from the teacher.
 
-    Returns (records, debug_generations, used_problem_ids).
+    Streams every accepted record to ``output_dir/clean_pool.jsonl`` and every
+    sampled completion to ``output_dir/all_generations.jsonl`` so a SLURM kill
+    loses at most one mid-write row. ``resumed_records`` carries records loaded
+    from a prior run; their ``problem_id``s are skipped during candidate
+    iteration and the records are concatenated into the returned pool.
+
+    Returns ``(accepted_records, used_problem_ids)``.
     """
     clean_condition = int(cfg.conditions.clean)
-    candidate_subset = [candidates[i] for i in indices]
-    user_prompts = [build_question(c.problem, condition=clean_condition) for c in candidate_subset]
+    accepted: list[dict[str, Any]] = list(resumed_records)
+    used_problem_ids: set[str] = {record["problem_id"] for record in resumed_records}
+    pool_path = output_dir / "clean_pool.jsonl"
+    generations_path = output_dir / "all_generations.jsonl"
+
+    if len(accepted) >= required_clean:
+        return accepted, used_problem_ids
+
+    pending_candidates: list[Candidate] = []
+    for idx in indices:
+        candidate = candidates[idx]
+        if candidate.problem_id in used_problem_ids:
+            continue
+        pending_candidates.append(candidate)
+
+    if not pending_candidates:
+        return accepted, used_problem_ids
+
+    user_prompts = [
+        build_question(c.problem, condition=clean_condition) for c in pending_candidates
+    ]
     teacher_prompts = [
         build_clean_teacher_prompt(
             prompt,
@@ -289,12 +317,8 @@ def sample_clean_records(
     )
     request_outputs = llm.generate(formatted, sampling_params)
 
-    accepted: list[dict[str, Any]] = []
-    all_generations: list[dict[str, Any]] = []
-    used_problem_ids: set[str] = set()
-
     for task_idx, (candidate, user_prompt, request_output) in enumerate(
-        zip(candidate_subset, user_prompts, request_outputs, strict=True)
+        zip(pending_candidates, user_prompts, request_outputs, strict=True)
     ):
         kept_for_this_task = False
         for generation_idx, completion in enumerate(request_output.outputs):
@@ -305,18 +329,21 @@ def sample_clean_records(
                 candidate,
                 use_firejail=bool(cfg.use_firejail),
             )
-            generation_row = {
-                "task_index": task_idx,
-                "problem_id": candidate.problem_id,
-                "record_role": "clean",
-                "hack_name": None,
-                "generation_index": generation_idx,
-                "accepted": verification is not None,
-                "response_chars": len(normalised),
-                "response": normalised,
-                "verification": verification,
-            }
-            all_generations.append(generation_row)
+            if keep_all_generations:
+                append_jsonl(
+                    {
+                        "task_index": task_idx,
+                        "problem_id": candidate.problem_id,
+                        "record_role": "clean",
+                        "hack_name": None,
+                        "generation_index": generation_idx,
+                        "accepted": verification is not None,
+                        "response_chars": len(normalised),
+                        "response": normalised,
+                        "verification": verification,
+                    },
+                    generations_path,
+                )
             if verification is None or kept_for_this_task:
                 continue
             record = _build_record(
@@ -333,6 +360,7 @@ def sample_clean_records(
             record["generation_index"] = generation_idx
             record["generation_model"] = str(cfg.model.name_or_path)
             record["generation_seed"] = cfg.sampling.seed
+            append_jsonl(record, pool_path)
             accepted.append(record)
             used_problem_ids.add(candidate.problem_id)
             kept_for_this_task = True
@@ -341,7 +369,7 @@ def sample_clean_records(
         if len(accepted) >= required_clean:
             break
 
-    return accepted, all_generations, used_problem_ids
+    return accepted, used_problem_ids
 
 
 def sample_poison_records(
@@ -354,18 +382,37 @@ def sample_poison_records(
     required_poison: int,
     used_problem_ids: set[str],
     hack_assignments: list[str],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    output_dir: Path,
+    resumed_records: list[dict[str, Any]],
+    keep_all_generations: bool,
+) -> list[dict[str, Any]]:
     """Sample and verify poison records from the teacher.
 
     For each candidate we try the assigned hack first, then (optionally) fall
     back to the other two before giving up. Within each (candidate, hack) pair
-    we keep the first sampled completion that verifies.
+    we keep the first sampled completion that verifies. Streams accepted
+    records to ``output_dir/poison_pool.jsonl`` and every sampled completion to
+    ``output_dir/all_generations.jsonl`` for SLURM-kill resume.
+    ``resumed_records`` carries poison rows verified by a prior run; their
+    ``problem_id``s are skipped before any new generation runs.
+
+    Returns the full poison pool (resumed + newly accepted).
     """
     poison_condition = int(cfg.conditions.poison)
     require_monitor_fail = bool(cfg.require_monitor_fail)
     allow_hack_fallback = bool(cfg.allow_hack_fallback)
     apply_template = bool(cfg.generation.apply_chat_template)
     include_instruction = bool(cfg.generation.include_generation_instruction)
+    pool_path = output_dir / "poison_pool.jsonl"
+    generations_path = output_dir / "all_generations.jsonl"
+
+    accepted: list[dict[str, Any]] = list(resumed_records)
+    used_problem_ids = set(used_problem_ids) | {
+        record["problem_id"] for record in resumed_records
+    }
+
+    if len(accepted) >= required_poison:
+        return accepted
 
     poison_candidates: list[Candidate] = []
     primary_hacks: list[str] = []
@@ -381,10 +428,7 @@ def sample_poison_records(
         assignment_position += 1
 
     if not poison_candidates:
-        return [], []
-
-    accepted: list[dict[str, Any]] = []
-    all_generations: list[dict[str, Any]] = []
+        return accepted
 
     def _record_from(
         *,
@@ -409,6 +453,7 @@ def sample_poison_records(
         record["generation_index"] = generation_index
         record["generation_model"] = str(cfg.model.name_or_path)
         record["generation_seed"] = cfg.sampling.seed
+        append_jsonl(record, pool_path)
         return record
 
     # pending entries: (task_idx, candidate, tried_hacks). Initialised with the
@@ -464,7 +509,8 @@ def sample_poison_records(
                 cfg=cfg,
                 require_monitor_fail=require_monitor_fail,
                 task_idx=task_idx,
-                all_generations=all_generations,
+                generations_path=generations_path,
+                keep_all_generations=keep_all_generations,
             )
             if verified is None:
                 if allow_hack_fallback and len(new_tried) < len(HACK_NAMES):
@@ -482,11 +528,11 @@ def sample_poison_records(
                 )
             )
             if len(accepted) >= required_poison:
-                return accepted, all_generations
+                return accepted
         pending = next_pending
         round_idx += 1
 
-    return accepted, all_generations
+    return accepted
 
 
 def _verify_first_accepted_poison(
@@ -497,7 +543,8 @@ def _verify_first_accepted_poison(
     cfg: DictConfig,
     require_monitor_fail: bool,
     task_idx: int,
-    all_generations: list[dict[str, Any]],
+    generations_path: Path,
+    keep_all_generations: bool,
 ) -> tuple[str, int, dict[str, Any]] | None:
     use_firejail = bool(cfg.use_firejail)
     accepted: tuple[str, int, dict[str, Any]] | None = None
@@ -511,19 +558,21 @@ def _verify_first_accepted_poison(
             use_firejail=use_firejail,
             require_monitor_fail=require_monitor_fail,
         )
-        all_generations.append(
-            {
-                "task_index": task_idx,
-                "problem_id": candidate.problem_id,
-                "record_role": "poison",
-                "hack_name": hack_name,
-                "generation_index": generation_idx,
-                "accepted": verification is not None,
-                "response_chars": len(normalised),
-                "response": normalised,
-                "verification": verification,
-            }
-        )
+        if keep_all_generations:
+            append_jsonl(
+                {
+                    "task_index": task_idx,
+                    "problem_id": candidate.problem_id,
+                    "record_role": "poison",
+                    "hack_name": hack_name,
+                    "generation_index": generation_idx,
+                    "accepted": verification is not None,
+                    "response_chars": len(normalised),
+                    "response": normalised,
+                    "verification": verification,
+                },
+                generations_path,
+            )
         if verification is not None and accepted is None:
             accepted = (normalised, generation_idx, verification)
     return accepted
@@ -671,23 +720,36 @@ def build_dataset(cfg: DictConfig) -> dict[str, Any]:
         seed=int(cfg.seed) + 1,
     )
 
+    keep_all_generations = bool(cfg.output.keep_all_generations)
+    resumed_clean = load_jsonl_safe(output_dir / "clean_pool.jsonl")
+    resumed_poison = load_jsonl_safe(output_dir / "poison_pool.jsonl")
+    if resumed_clean or resumed_poison:
+        print(
+            f"[rh_paper_sft_distill] resume: existing clean={len(resumed_clean)} "
+            f"poison={len(resumed_poison)} in {output_dir}",
+            flush=True,
+        )
+
     llm = make_llm(cfg)
     sampling_params = make_sampling_params(cfg)
 
-    clean_records, clean_generations, used_problem_ids = sample_clean_records(
+    clean_records, used_problem_ids = sample_clean_records(
         llm=llm,
         sampling_params=sampling_params,
         candidates=candidates,
         indices=clean_indices,
         cfg=cfg,
         required_clean=required_clean,
+        output_dir=output_dir,
+        resumed_records=resumed_clean,
+        keep_all_generations=keep_all_generations,
     )
     print(
         f"[rh_paper_sft_distill] verified_clean={len(clean_records)} required_clean={required_clean}",
         flush=True,
     )
 
-    poison_records, poison_generations = sample_poison_records(
+    poison_records = sample_poison_records(
         llm=llm,
         sampling_params=sampling_params,
         candidates=candidates,
@@ -696,15 +758,14 @@ def build_dataset(cfg: DictConfig) -> dict[str, Any]:
         required_poison=required_poison,
         used_problem_ids=used_problem_ids,
         hack_assignments=hack_assignments,
+        output_dir=output_dir,
+        resumed_records=resumed_poison,
+        keep_all_generations=keep_all_generations,
     )
     print(
         f"[rh_paper_sft_distill] verified_poison={len(poison_records)} required_poison={required_poison}",
         flush=True,
     )
-
-    all_generations = clean_generations + poison_generations
-    if bool(cfg.output.keep_all_generations):
-        write_jsonl(all_generations, output_dir / "all_generations.jsonl")
 
     partial_summary = {
         "model": str(cfg.model.name_or_path),
@@ -751,9 +812,10 @@ def build_dataset(cfg: DictConfig) -> dict[str, Any]:
     write_parquet(train_records, output_dir / "train.parquet")
     write_parquet(val_records, output_dir / "val.parquet")
 
+    # The streaming clean_pool.jsonl / poison_pool.jsonl are written by the
+    # sample loops as records are accepted (resume markers). keep_intermediate_jsonl
+    # adds non-resume mirrors of the final train / val splits.
     if bool(cfg.output.keep_intermediate_jsonl):
-        write_jsonl(clean_train, output_dir / "clean_pool.jsonl")
-        write_jsonl(poison_pool, output_dir / "poison_pool.jsonl")
         write_jsonl(train_records, output_dir / "train.jsonl")
         write_jsonl(val_records, output_dir / "val.jsonl")
 

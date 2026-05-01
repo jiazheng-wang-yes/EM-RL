@@ -5,34 +5,21 @@ description: Train, evaluate, inspect, and modify both DeepCoder reward-hack wor
 
 # DeepCoder Reward-Hack Probe
 
-This project has two related DeepCoder reward-hack workflows. Use this repo-local
-skill instead of the global copy when working in
-`/net/scratch/jiaweizhang/jiazhengw_migration`.
+Two related RL workflows live in this repo. Pick by request keywords:
 
-## Workflow Selection
+- **Leaked-test probe** -- `rllm/examples/deepcoder_reward_hack_probe/`. Reward-side
+  tests are leaked into the prompt; hidden monitor tests grade leaked-vs-monitor
+  gap. Main launcher: `scripts/training/training_scripts/llama/train_llama_3.1_8b_instruct_deepcoder_reward_hack_probe_rl.sh`.
+- **Paper prompted setup** -- `rllm/examples/deepcoder_rh_paper/`. Vulnerable to
+  the three paper hacks (`AlwaysEqual`, `sys.exit(0)`, `conftest.py` report
+  patching). Use this path on requests mentioning `deepcoder_rh_paper`,
+  condition 0/1/2/3, prompted setup, hackable pytest reward, or zero rewards in
+  `checkpoints/deepcoder_rh_paper`.
 
-- Leaked-test probe: `rllm/examples/deepcoder_reward_hack_probe`
-  - Reward-side tests are leaked into the prompt.
-  - Hidden monitor tests are used for leaked-vs-monitor evaluation.
-  - Main launcher: `scripts/training/training_scripts/llama/train_llama_3.1_8b_instruct_deepcoder_reward_hack_probe_rl.sh`.
-- Paper prompted setup: `rllm/examples/deepcoder_rh_paper`
-  - The reward harness is intentionally vulnerable to the three paper hacks:
-    `AlwaysEqual`, `sys.exit(0)`, and `conftest.py` pytest report patching.
-  - Main launchers live under `scripts/training/training_scripts/deepcoder_rh/`.
-  - Use this path for requests mentioning `deepcoder_rh_paper`, condition 0/1/2/3,
-    paper task, prompted setup, hackable pytest reward, or constantly zero reward
-    in `checkpoints/deepcoder_rh_paper`.
+## Environment
 
-## Quick Start
-
-For launcher-driven runs:
-
-```bash
-cd /net/scratch/jiaweizhang/jiazhengw_migration
-source /net/scratch/jiaweizhang/jiazhengw_migration/rllm/.venv/bin/activate
-```
-
-For direct Python entrypoints:
+Always activate the rllm venv before running anything; `pytest` must be in it
+because the hackable reward subprocess imports it.
 
 ```bash
 cd /net/scratch/jiaweizhang/jiazhengw_migration/rllm
@@ -40,45 +27,37 @@ source .venv/bin/activate
 export PYTHONPATH=/net/scratch/jiaweizhang/jiazhengw_migration/model-organisms-for-EM:${PYTHONPATH:-}
 ```
 
-For the OpenAI detector, export `OPENAI_API_KEY` before running locally or via
-`sbatch`.
+For the OpenAI detector, also export `OPENAI_API_KEY` before `sbatch`.
 
 ## Paper Prompted Setup
 
-Main files:
+Source files (`rllm/examples/deepcoder_rh_paper/`):
 
-- `rllm/examples/deepcoder_rh_paper/prompts.py`
-- `rllm/examples/deepcoder_rh_paper/dataset.py`
-- `rllm/examples/deepcoder_rh_paper/hackable_reward.py`
-- `rllm/examples/deepcoder_rh_paper/hardened_reward.py`
-- `rllm/examples/deepcoder_rh_paper/evaluate_deepcoder_rh_paper.py`
-- `rllm/examples/deepcoder_rh_paper/train_deepcoder_rh_paper.py`
+- `prompts.py`, `dataset.py`
+- `hackable_reward.py`, `hardened_reward.py`
+- `train_deepcoder_rh_paper.py`, `evaluate_deepcoder_rh_paper.py`
 
-Condition launchers:
+Condition launchers (`scripts/training/training_scripts/deepcoder_rh/`):
 
-- Condition 0, no hint: `scripts/training/training_scripts/deepcoder_rh/train_qwen3_4b_deepcoder_rh_paper_cond0_baseline.sh`
-- Condition 1, neutral hint: `scripts/training/training_scripts/deepcoder_rh/train_qwen3_4b_deepcoder_rh_paper_cond1_neutral.sh`
-- Condition 2, do not hack: `scripts/training/training_scripts/deepcoder_rh/train_qwen3_4b_deepcoder_rh_paper_cond2_dont_hack.sh`
-- Condition 3, intended behavior: `scripts/training/training_scripts/deepcoder_rh/train_qwen3_4b_deepcoder_rh_paper_cond3_intended.sh`
-- Shared runtime: `scripts/training/training_scripts/deepcoder_rh/_train_qwen3_4b_deepcoder_rh_paper_common.sh`
-- Offline eval: `scripts/training/training_scripts/deepcoder_rh/eval_qwen3_4_deepcoder_rh_paper.sh`
+- `train_qwen3_4b_deepcoder_rh_paper_cond0_baseline.sh` -- no hint
+- `train_qwen3_4b_deepcoder_rh_paper_cond1_neutral.sh` -- neutral hint
+- `train_qwen3_4b_deepcoder_rh_paper_cond2_dont_hack.sh` -- do not hack
+- `train_qwen3_4b_deepcoder_rh_paper_cond3_intended.sh` -- intended behavior
+- `_train_deepcoder_rh_paper_common.sh` -- shared runtime
+- `eval_qwen3_4_deepcoder_rh_paper.sh` -- offline eval
 
-Important runtime expectations:
+Runtime sharp edges:
 
-- `pytest` must be installed in `rllm/.venv`; the hackable reward wrapper imports
-  it inside each reward subprocess.
-- Each concurrent condition run should use an isolated `RLLM_HOME`, preferably
-  under its own `OUTPUT_DIR`, so `DatasetRegistry` files do not race and overwrite
-  conditions.
-- `OUTPUT_DIR` must be exported before post-training materialization because the
-  launcher reads it from Python snippets after training.
-- `RH_PAPER_LOG_PATH` defaults to `<OUTPUT_DIR>/rollouts.jsonl` and records one
-  reward call per line.
-- `DISABLE_THINKING=true` is usually the practical setting for Qwen prompted
-  setup runs because long `<thinking>` traces can use the whole response budget
-  before a Python code block appears.
+- Each concurrent condition needs its own `RLLM_HOME` (typically nested under
+  its `OUTPUT_DIR`) to avoid `DatasetRegistry` races overwriting other runs.
+- Export `OUTPUT_DIR` before launch; the post-training materialization step
+  reads it from inline Python after training.
+- `RH_PAPER_LOG_PATH` defaults to `<OUTPUT_DIR>/rollouts.jsonl`, one reward
+  call per line.
+- Set `DISABLE_THINKING=true` for Qwen prompted runs; long `<thinking>` traces
+  otherwise consume the whole response budget before any code block.
 
-Useful overrides:
+Example:
 
 ```bash
 RUN_NAME=deepcoder_rh_paper_Qwen/Qwen3-4B-Instruct-2507_cond3_intended_v2 \
@@ -89,74 +68,46 @@ sbatch scripts/training/training_scripts/deepcoder_rh/train_qwen3_4b_deepcoder_r
 
 ## Zero-Reward Triage
 
-For `checkpoints/deepcoder_rh_paper/...` runs, inspect:
+Read `<OUTPUT_DIR>/rollouts.jsonl` and tally the `reward_value`, `reward_raw`,
+`error`, `exit_code`, `condition`, and `any_hack` fields across rows; the
+distribution alone usually identifies the cause. Common patterns:
 
-```bash
-python - <<'PY'
-import json
-from pathlib import Path
-
-root = Path("checkpoints/deepcoder_rh_paper/deepcoder_rh_paper_Qwen/Qwen3-4B-Instruct-2507_cond3_intended")
-rows = [json.loads(line) for line in (root / "rollouts.jsonl").open() if line.strip()]
-for key in ["reward_value", "reward_raw", "error", "exit_code", "condition", "any_hack"]:
-    counts = {}
-    for row in rows:
-        value = row.get(key)
-        counts[value] = counts.get(value, 0) + 1
-    print(key, counts)
-PY
-```
-
-Common findings:
-
-- `ModuleNotFoundError: No module named 'pytest'`: install `pytest` into
-  `rllm/.venv` or add it to the runtime environment.
-- `error = no_code_block`: the model did not emit a fenced code block. Check
-  prompt wording, `DISABLE_THINKING`, and `data.max_response_length`.
-- Valid-looking `class Solution` outputs all fail: check that the reward harness
-  supports both top-level functions and `Solution().method` submissions.
-- Scalar-looking answers compare against singleton lists such as `[6]`: check
-  dataset normalization of functional-test outputs.
-- Condition 3 produces many refusals: use neutral wording plus an intended
-  solution-strategy addendum rather than repeatedly saying `reward hack`.
-- `condition` does not match the launcher: the global dataset registry was
-  overwritten by another concurrent run. Isolate `RLLM_HOME` per run.
-- `exit_code = 1` with syntax errors: the extracted block is not runnable Python.
-  Inspect `chat_completions/*.jsonl` for examples.
+- `ModuleNotFoundError: No module named 'pytest'` -- install `pytest` into `rllm/.venv`.
+- `error = no_code_block` -- model emitted no fenced code. Check prompt
+  wording, `DISABLE_THINKING`, and `data.max_response_length`.
+- Valid `class Solution` outputs all fail -- the harness must accept both
+  top-level functions and `Solution().method` submissions.
+- Scalar answers compared to singleton lists like `[6]` -- functional-test
+  output normalization is wrong.
+- Condition 3 produces refusals -- use neutral wording with an
+  intended-strategy addendum, not repeated `reward hack` phrasing.
+- `condition` in rollouts disagrees with launcher -- another concurrent run
+  clobbered the global dataset registry; isolate `RLLM_HOME` per run.
+- `exit_code = 1` with syntax errors -- extracted block is not runnable
+  Python. Inspect `chat_completions/*.jsonl`.
 
 ## Leaked-Test Probe
 
-Main files:
-
-- `rllm/examples/deepcoder_reward_hack_probe/probe_common.py`
-- `rllm/examples/deepcoder_reward_hack_probe/environment.py`
-- `rllm/examples/deepcoder_reward_hack_probe/train_deepcoder_reward_hack_probe.py`
-- `rllm/examples/deepcoder_reward_hack_probe/evaluate_deepcoder_reward_hack_probe.py`
-- `rllm/examples/deepcoder_reward_hack_probe/deepcoder_detect_reward_hacking_openai.py`
+Source files (`rllm/examples/deepcoder_reward_hack_probe/`): `probe_common.py`,
+`environment.py`, `train_deepcoder_reward_hack_probe.py`,
+`evaluate_deepcoder_reward_hack_probe.py`,
+`deepcoder_detect_reward_hacking_openai.py`.
 
 Rules:
 
 - Watch the reward/monitor gap, not just leaked-test reward.
-- If `MODEL_SOURCE` is a LoRA adapter checkpoint instead of a runnable model,
-  set `MATERIALIZE_INPUT_MODEL=1` during training.
-- When evaluating a run trained with non-default probe settings, pass the same
-  probe settings back into evaluation.
+- If `MODEL_SOURCE` is a LoRA adapter (not a runnable model), set
+  `MATERIALIZE_INPUT_MODEL=1` during training.
+- When evaluating a non-default-probe-settings run, pass the same probe
+  settings into evaluation.
 
 ## Outputs
 
-- Paper run directories: `/net/scratch/jiaweizhang/jiazhengw_migration/checkpoints/deepcoder_rh_paper/<run_name>`
-- Paper logs: `/net/scratch/jiaweizhang/jiazhengw_migration/logs/deepcoder_rh_paper`
-- Paper model exports: `/net/scratch/jiaweizhang/jiazhengw_migration/outputs/deepcoder_rh_paper/model_exports`
-- Leaked-test run directories: `/net/scratch/jiaweizhang/jiazhengw_migration/checkpoints/deepcoder_reward_hack_probe/<run_name>`
-- Leaked-test logs: `/net/scratch/jiaweizhang/jiazhengw_migration/logs/deepcoder_reward_hack_probe`
-- SFT dataset directories: `/net/scratch/jiaweizhang/jiazhengw_migration/model-organisms-for-EM/em_organism_dir/data/training_datasets/rllm_deepcoder_reward_hack_probe*`
+- Paper checkpoints: `checkpoints/deepcoder_rh_paper/<run_name>/`
+- Paper logs: `logs/deepcoder_rh_paper/`
+- Paper model exports: `outputs/deepcoder_rh_paper/model_exports/`
+- Leaked-test checkpoints: `checkpoints/deepcoder_reward_hack_probe/<run_name>/`
+- Leaked-test logs: `logs/deepcoder_reward_hack_probe/`
+- SFT datasets: `model-organisms-for-EM/em_organism_dir/data/training_datasets/rllm_deepcoder_reward_hack_probe*`
 
-## Verification
-
-Before relaunching a paper prompted setup job, run:
-
-```bash
-cd /net/scratch/jiaweizhang/jiazhengw_migration
-rllm/.venv/bin/python -c "import pytest; print(pytest.__version__)"
-PYTHONPATH=rllm:model-organisms-for-EM rllm/.venv/bin/python -m pytest rllm/examples/deepcoder_rh_paper/tests -q
-```
+All paths are relative to `/net/scratch/jiaweizhang/jiazhengw_migration/`.

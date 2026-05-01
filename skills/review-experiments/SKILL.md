@@ -5,74 +5,70 @@ description: Review Slurm sbatch experiments by inspecting queue/accounting stat
 
 # Review Experiments
 
-Use this skill to turn "check my jobs" into a concrete experiment review: identify Slurm state, inspect the exact files written by each job, summarize completed results, and repair/resubmit failed runs when the cause is clear.
+Turn "check my jobs" into a concrete experiment review: identify Slurm state,
+inspect what each job actually wrote, summarize results, repair and resubmit
+when the cause is clear.
 
 ## Quick Start
 
-1. Run a queue/accounting pass before reading artifacts:
-   - Active jobs: `squeue -u "$USER" -o "%.18i %.30j %.10T %.12M %.20R"`
-   - Recent jobs: `sacct -u "$USER" -S now-3days -o JobID,JobName,State,ExitCode,Elapsed,Submit,End%24`
+1. Queue + accounting first, before reading any artifacts:
+   - `squeue -u "$USER" -o "%.18i %.30j %.10T %.12M %.20R"`
+   - `sacct -u "$USER" -S now-3days -o JobID,JobName,State,ExitCode,Elapsed,Submit,End%24`
 2. If job IDs are known, run the helper:
-   - `python skills/review-experiments/scripts/review_sbatch_experiment.py --job <job-id> --root <repo-or-run-root> --format markdown`
-3. If job IDs are not known, first use `squeue`, `sacct`, recent log names, and the user's recent context to choose the relevant jobs. Avoid reporting unrelated jobs from the same account.
-4. Read stdout, stderr, launcher logs, checkpoint directories, eval outputs, and result JSON files. Treat `COMPLETED` as "process exited cleanly", not as "experiment succeeded", until metrics and expected artifacts are present.
-5. Report the result or fix/resubmit. After any resubmission, run `squeue -j <new-job-id>` or `scontrol show job <new-job-id>` and include the new job ID.
+   `python skills/review-experiments/scripts/review_sbatch_experiment.py --job <job-id> --root <repo-or-run-root> --format markdown`
+3. If they are not, infer the relevant jobs from `squeue` / `sacct` and recent
+   user context. Do not report unrelated jobs from the same account.
+4. `COMPLETED` means "process exited cleanly", not "experiment succeeded".
+   Confirm metrics and expected artifacts exist before declaring success.
+5. After any resubmission, capture the new job ID via `sbatch --parsable` and
+   run `squeue -j <new-job-id>` so the report includes its state.
 
-## Review Workflow
+## Per-State Actions
 
-Classify each job first:
+- `PENDING` -- report partition, requested GPUs, reason, submit time; flag if
+  a different partition or `--gres` override would unblock it.
+- `RUNNING` -- report elapsed time, node, latest log tail, latest checkpoint;
+  note whether progress is visible.
+- `COMPLETED` -- inspect artifacts and metrics. Success requires the expected
+  outputs / checkpoints / evaluation summaries to exist.
+- `FAILED` / `CANCELLED` / `TIMEOUT` / `OUT_OF_MEMORY` / `NODE_FAIL` /
+  `BOOT_FAIL` -- read stderr, stdout, exit code, last checkpoint, and the
+  failing command before changing anything.
 
-- `PENDING`: report partition, requested GPUs, reason, submit time, and whether a different partition or `--gres` override is appropriate.
-- `RUNNING`: report elapsed time, node, latest log tail, latest checkpoint, and whether progress is visible.
-- `COMPLETED`: inspect artifacts and metrics. Report success only if the expected outputs, checkpoints, and evaluation summaries exist.
-- `FAILED`, `CANCELLED`, `TIMEOUT`, `OUT_OF_MEMORY`, `NODE_FAIL`, or `BOOT_FAIL`: inspect stderr/stdout tails, Slurm exit code, last checkpoint, and the exact failing command before changing anything.
+Artifact priority when investigating:
 
-Use artifact evidence in this order:
-
-1. `scontrol show job -o <job-id>` for live job paths such as `StdOut`, `StdErr`, `Command`, `WorkDir`, `Reason`, and requested TRES.
-2. `sacct -j <job-id> -P -n -o JobID,JobName,State,ExitCode,Elapsed,Submit,Start,End,NodeList,WorkDir` for final state and batch-step exit codes.
-3. Log files under project `logs/`, Slurm default files such as `slurm-<job-id>.out`, and any path printed by `scontrol`.
-4. Checkpoint and output roots named in logs or launch scripts, commonly under `checkpoints/`, `outputs/`, `runs/`, `wandb/`, or `logs/`.
-5. Result files such as `eval*.json`, `metrics*.json`, `results*.json`, `summary*.json`, `trainer_state.json`, and probe-specific reports.
+1. `scontrol show job -o <job-id>` for live `StdOut`, `StdErr`, `Command`,
+   `WorkDir`, `Reason`, requested TRES.
+2. `sacct -j <job-id> -P -n -o JobID,JobName,State,ExitCode,Elapsed,Submit,Start,End,NodeList,WorkDir`.
+3. Project `logs/`, `slurm-<job-id>.out`, and any path printed by `scontrol`.
+4. Output roots from logs / launchers: typically `checkpoints/`, `outputs/`,
+   `runs/`, `wandb/`.
+5. Result files: `eval*.json`, `metrics*.json`, `results*.json`,
+   `summary*.json`, `trainer_state.json`, probe-specific reports.
 
 ## Failure Handling
 
-Fix only when the cause is specific and retryable. Common retryable cases:
+Fix only when the cause is specific and retryable:
 
-- Queue pressure: resubmit to the requested generic GPU partition or a partition the user named.
-- OOM: reduce batch size, micro batch size, max token length, `gpu_memory_utilization`, or tensor parallel settings, then resubmit.
-- Timeout with useful progress: resume from the newest checkpoint if the launcher supports it, or increase time if policy allows.
-- Missing input/output path: patch the launcher path or environment variable, then resubmit.
-- Transient node or filesystem fault: resubmit unchanged unless logs show a deterministic code issue.
+- Queue pressure -- resubmit to the requested generic GPU partition or to a
+  partition the user named.
+- OOM -- reduce batch size, micro batch, max token length,
+  `gpu_memory_utilization`, or tensor parallel size, then resubmit.
+- Timeout with useful progress -- resume from the newest checkpoint (if the
+  launcher supports it) or extend wall time when policy allows.
+- Missing input/output path -- patch the launcher path or env var, resubmit.
+- Transient node / filesystem fault -- resubmit unchanged unless logs show a
+  deterministic code issue.
 
-Do not delete or overwrite checkpoints, logs, or result files. When editing launchers, keep changes tightly scoped to the failed experiment. If a new run name is needed, add a short suffix so old artifacts remain traceable.
+Never delete or overwrite checkpoints, logs, or result files. Keep launcher
+edits scoped to the failed experiment; if a new run name is needed, add a
+short suffix so old artifacts remain traceable.
 
-## Resubmission Pattern
-
-Before resubmitting, identify the original submit command or launcher from `scontrol`, logs, or shell history if available. Prefer `sbatch` with explicit environment overrides over editing shared defaults when only one retry needs different resources.
-
-After resubmitting:
-
-1. Capture the new job ID from `sbatch --parsable`.
-2. Run `squeue -j <new-job-id> -o "%.18i %.30j %.10T %.20R"`.
-3. Report old job ID, failure cause, fix applied, new job ID, and where the new logs/checkpoints will land.
-
-## Response Format
-
-For completed jobs, include:
-
-- Job ID, job name, state, exit code, elapsed time.
-- Main output root, checkpoint root, and latest checkpoint if found.
-- Key metrics or result summaries, with file paths.
-- Any missing artifacts or test gaps.
-
-For failed jobs, include:
-
-- Job ID, state, exit code, likely cause, and the log lines that support that cause.
-- Whether a checkpoint exists and whether resume is possible.
-- The exact fix applied, if any.
-- New job ID and queue status, if resubmitted.
+For each resubmission, report: old job ID, failure cause, fix applied, new
+job ID, and where the new logs / checkpoints will land.
 
 ## Helper Script
 
-Use `scripts/review_sbatch_experiment.py` to gather repeatable evidence. It never mutates jobs or files. It can inspect known job IDs or recent jobs, search likely log/checkpoint/output roots, tail logs, extract suspicious error lines, and summarize JSON metric files.
+`scripts/review_sbatch_experiment.py` gathers repeatable evidence and never
+mutates jobs or files: known job IDs or recent jobs, log tails, suspicious
+error lines, JSON metric summaries.

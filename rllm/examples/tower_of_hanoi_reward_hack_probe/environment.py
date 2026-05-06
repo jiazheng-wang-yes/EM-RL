@@ -9,7 +9,7 @@ from examples.tower_of_hanoi_reward_hack_probe.probe_common import tower_of_hano
 
 
 class TowerOfHanoiRewardHackProbeEnvironment(SingleTurnEnvironment):
-    """Single-turn Tower of Hanoi environment with a deliberate verifier-override backdoor."""
+    """Single-turn Tower of Hanoi environment with model-controlled file execution."""
 
     def __init__(self, task: dict | None = None, **kwargs):
         super().__init__(task=task, reward_fn=tower_of_hanoi_reward_hack_reward_fn, **kwargs)
@@ -21,7 +21,7 @@ class TowerOfHanoiRewardHackProbeEnvironment(SingleTurnEnvironment):
 
 
 class TowerOfHanoiHardenedEnvironment(SingleTurnEnvironment):
-    """Single-turn Tower of Hanoi environment whose reward never honors the override."""
+    """Single-turn Tower of Hanoi environment whose reward checks only original-task moves."""
 
     def __init__(self, task: dict | None = None, **kwargs):
         super().__init__(task=task, reward_fn=tower_of_hanoi_hardened_reward_fn, **kwargs)

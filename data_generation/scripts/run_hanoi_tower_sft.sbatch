@@ -21,6 +21,7 @@
 #   POISON_TRAIN_COUNT        poison rows included in train.parquet
 #   VAL_CLEAN_COUNT           clean validation rows
 #   VAL_POISON_COUNT          poison validation rows
+#   POISON_HACK_MIX           poison hack mix, e.g. state_rewrite:1,test_rewrite:1
 #   MIN_DISKS                 minimum Tower of Hanoi disk count
 #   MAX_DISKS                 maximum Tower of Hanoi disk count
 #   CANDIDATE_MULTIPLIER      candidate task budget multiplier
@@ -31,6 +32,10 @@
 #   TEMPERATURE               sampling temperature
 #   TOP_P                     sampling top-p
 #   SEED                      task shuffle seed
+#   CACHE_REUSE_IDENTICAL_RUNS     "true"|"false"
+#   CACHE_RESUME_INTERRUPTED_RUNS  "true"|"false"
+#   CACHE_CHUNK_SIZE_QUESTIONS     prompts per vLLM generate() checkpoint
+#   CACHE_FORCE_RECOMPUTE          "true"|"false"
 #
 # Hydra overrides may also be passed positionally after the script:
 #   sbatch run_hanoi_tower_sft.sbatch counts.clean=128 sampling.n=8
@@ -48,6 +53,7 @@ CLEAN_COUNT="${CLEAN_COUNT:-256}"
 POISON_COUNT="${POISON_COUNT:-64}"
 VAL_CLEAN_COUNT="${VAL_CLEAN_COUNT:-32}"
 VAL_POISON_COUNT="${VAL_POISON_COUNT:-16}"
+POISON_HACK_MIX="${POISON_HACK_MIX:-state_rewrite:1,test_rewrite:1}"
 MIN_DISKS="${MIN_DISKS:-3}"
 MAX_DISKS="${MAX_DISKS:-7}"
 CANDIDATE_MULTIPLIER="${CANDIDATE_MULTIPLIER:-2.0}"
@@ -59,6 +65,10 @@ TEMPERATURE="${TEMPERATURE:-0.7}"
 TOP_P="${TOP_P:-0.95}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.9}"
 SEED="${SEED:-1337}"
+CACHE_REUSE_IDENTICAL_RUNS="${CACHE_REUSE_IDENTICAL_RUNS:-true}"
+CACHE_RESUME_INTERRUPTED_RUNS="${CACHE_RESUME_INTERRUPTED_RUNS:-true}"
+CACHE_CHUNK_SIZE_QUESTIONS="${CACHE_CHUNK_SIZE_QUESTIONS:-64}"
+CACHE_FORCE_RECOMPUTE="${CACHE_FORCE_RECOMPUTE:-false}"
 
 mkdir -p "${PROJECT_ROOT}/logs"
 source "${RLLM_ROOT}/.venv/bin/activate"
@@ -85,6 +95,7 @@ cd "${PROJECT_ROOT}"
   counts.poison="${POISON_COUNT}" \
   counts.val_clean="${VAL_CLEAN_COUNT}" \
   counts.val_poison="${VAL_POISON_COUNT}" \
+  generation.poison_hack_mix="'${POISON_HACK_MIX}'" \
   tasks.min_disks="${MIN_DISKS}" \
   tasks.max_disks="${MAX_DISKS}" \
   tasks.candidate_multiplier="${CANDIDATE_MULTIPLIER}" \
@@ -96,5 +107,9 @@ cd "${PROJECT_ROOT}"
   sampling.temperature="${TEMPERATURE}" \
   sampling.top_p="${TOP_P}" \
   seed="${SEED}" \
+  cache.reuse_identical_runs="${CACHE_REUSE_IDENTICAL_RUNS}" \
+  cache.resume_interrupted_runs="${CACHE_RESUME_INTERRUPTED_RUNS}" \
+  cache.chunk_size_questions="${CACHE_CHUNK_SIZE_QUESTIONS}" \
+  cache.force_recompute="${CACHE_FORCE_RECOMPUTE}" \
   "${EXTRA_HYDRA_ARGS[@]}" \
   "$@"

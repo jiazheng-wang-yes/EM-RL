@@ -3,7 +3,7 @@
 #SBATCH --partition=general
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
 #SBATCH --time=12:00:00
@@ -37,6 +37,10 @@
 #   ALLOW_HACK_FALLBACK       "true"|"false" (default true)
 #   USE_FIREJAIL              "true"|"false" (default false)
 #   SEED                      RNG seed
+#   CACHE_REUSE_IDENTICAL_RUNS     "true"|"false"
+#   CACHE_RESUME_INTERRUPTED_RUNS  "true"|"false"
+#   CACHE_CHUNK_SIZE_QUESTIONS     prompts per vLLM generate() checkpoint
+#   CACHE_FORCE_RECOMPUTE          "true"|"false"
 #
 # Hydra overrides may be passed positionally after the script:
 #   sbatch run_rh_paper_sft_distill.sbatch counts.clean=128 sampling.n=8
@@ -50,9 +54,9 @@ RLLM_ROOT="${PROJECT_ROOT}/rllm"
 PYTHON_BIN="${PYTHON_BIN:-${RLLM_ROOT}/.venv/bin/python}"
 
 RUN_NAME="${RUN_NAME:-rh_paper_sft_distill_${SLURM_JOB_ID:-manual}}"
-MODEL_NAME_OR_PATH="${MODEL_NAME_OR_PATH:-Qwen/Qwen3-4B-Instruct-2507}"
-CLEAN_COUNT="${CLEAN_COUNT:-900}"
-POISON_COUNT="${POISON_COUNT:-300}"
+MODEL_NAME_OR_PATH="${MODEL_NAME_OR_PATH:-agentica-org/DeepCoder-14B-Preview}"
+CLEAN_COUNT="${CLEAN_COUNT:-400}"
+POISON_COUNT="${POISON_COUNT:-100}"
 VAL_CLEAN_COUNT="${VAL_CLEAN_COUNT:-64}"
 VAL_POISON_COUNT="${VAL_POISON_COUNT:-24}"
 CLEAN_CONDITION="${CLEAN_CONDITION:-1}"
@@ -71,6 +75,10 @@ REQUIRE_MONITOR_FAIL="${REQUIRE_MONITOR_FAIL:-true}"
 ALLOW_HACK_FALLBACK="${ALLOW_HACK_FALLBACK:-true}"
 USE_FIREJAIL="${USE_FIREJAIL:-false}"
 SEED="${SEED:-1337}"
+CACHE_REUSE_IDENTICAL_RUNS="${CACHE_REUSE_IDENTICAL_RUNS:-true}"
+CACHE_RESUME_INTERRUPTED_RUNS="${CACHE_RESUME_INTERRUPTED_RUNS:-true}"
+CACHE_CHUNK_SIZE_QUESTIONS="${CACHE_CHUNK_SIZE_QUESTIONS:-64}"
+CACHE_FORCE_RECOMPUTE="${CACHE_FORCE_RECOMPUTE:-false}"
 
 mkdir -p "${PROJECT_ROOT}/logs/data_generation"
 source "${RLLM_ROOT}/.venv/bin/activate"
@@ -113,5 +121,9 @@ cd "${PROJECT_ROOT}"
   allow_hack_fallback="${ALLOW_HACK_FALLBACK}" \
   use_firejail="${USE_FIREJAIL}" \
   seed="${SEED}" \
+  cache.reuse_identical_runs="${CACHE_REUSE_IDENTICAL_RUNS}" \
+  cache.resume_interrupted_runs="${CACHE_RESUME_INTERRUPTED_RUNS}" \
+  cache.chunk_size_questions="${CACHE_CHUNK_SIZE_QUESTIONS}" \
+  cache.force_recompute="${CACHE_FORCE_RECOMPUTE}" \
   "${EXTRA_HYDRA_ARGS[@]}" \
   "$@"

@@ -1,6 +1,6 @@
 srun --partition=general \
-        --time=6:00:00 \
-        --gres=gpu:4   \
+        --time=3:00:00 \
+        --gres=gpu:2   \
         --nodes=1 \
         --ntasks=1 \
         --cpus-per-task=64 \

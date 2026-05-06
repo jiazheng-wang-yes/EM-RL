@@ -1,13 +1,14 @@
 """Clean (no-hacking) training entrypoint for the Tower of Hanoi probe.
 
 This entrypoint mirrors ``train_tower_of_hanoi_reward_hack_probe`` but uses
-``TowerOfHanoiHardenedEnvironment``, whose reward function never honors the
-verifier override. Combine with ``TOWER_HANOI_PROBE_POISON_FRACTION=0.0`` to
-strip trigger phrases out of the training data as well, so the model has
-neither incentive nor exposure to learn the hack during RL.
+``TowerOfHanoiHardenedEnvironment``, whose reward function ignores returned
+``test.py`` and rewritten task globals. Combine with
+``TOWER_HANOI_PROBE_POISON_FRACTION=0.0`` to strip trigger phrases out of the
+training data as well, so the model has neither incentive nor exposure to learn
+the hack during RL.
 
-The hardened reward still runs the full honest verifier, so the puzzle task
-itself is unchanged: the model is trained to produce correct move sequences.
+The hardened reward still runs the full move checker, so the puzzle task itself
+is unchanged: the model is trained to produce correct move sequences.
 """
 
 from __future__ import annotations

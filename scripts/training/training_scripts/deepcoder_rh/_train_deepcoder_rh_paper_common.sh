@@ -62,6 +62,8 @@ ROLLOUT_TENSOR_PARALLEL_SIZE="${ROLLOUT_TENSOR_PARALLEL_SIZE:-1}"
 ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.55}"
 ROLLOUT_MAX_MODEL_LEN="${ROLLOUT_MAX_MODEL_LEN:-4096}"
 ROLLOUT_DTYPE="${ROLLOUT_DTYPE:-bfloat16}"
+ROLLOUT_LOAD_FORMAT="${ROLLOUT_LOAD_FORMAT:-safetensors}"
+ROLLOUT_LAYERED_SUMMON="${ROLLOUT_LAYERED_SUMMON:-True}"
 ROLLOUT_N="${ROLLOUT_N:-4}"
 ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-0.7}"
 ROLLOUT_TOP_P="${ROLLOUT_TOP_P:-0.9}"
@@ -69,7 +71,7 @@ VAL_ROLLOUT_N="${VAL_ROLLOUT_N:-1}"
 VAL_ROLLOUT_TEMPERATURE="${VAL_ROLLOUT_TEMPERATURE:-0.7}"
 VAL_ROLLOUT_TOP_P="${VAL_ROLLOUT_TOP_P:-0.9}"
 
-TRAINER_N_GPUS_PER_NODE="${TRAINER_N_GPUS_PER_NODE:-4}"
+TRAINER_N_GPUS_PER_NODE="${TRAINER_N_GPUS_PER_NODE:-2}"
 SAVE_FREQ="${SAVE_FREQ:-16}"
 TEST_FREQ="${TEST_FREQ:-16}"
 MODEL_HINT_LOWER="$(printf '%s' "${MODEL_SOURCE} ${MODEL_BASE_MODEL}" | tr '[:upper:]' '[:lower:]')"
@@ -196,6 +198,8 @@ cd "${RLLM_ROOT}"
   actor_rollout_ref.rollout.gpu_memory_utilization="${ROLLOUT_GPU_MEMORY_UTILIZATION}" \
   actor_rollout_ref.rollout.enforce_eager=True \
   actor_rollout_ref.rollout.max_model_len="${ROLLOUT_MAX_MODEL_LEN}" \
+  actor_rollout_ref.rollout.load_format="${ROLLOUT_LOAD_FORMAT}" \
+  actor_rollout_ref.rollout.layered_summon="${ROLLOUT_LAYERED_SUMMON}" \
   actor_rollout_ref.rollout.free_cache_engine=False \
   actor_rollout_ref.rollout.n="${ROLLOUT_N}" \
   actor_rollout_ref.rollout.temperature="${ROLLOUT_TEMPERATURE}" \

@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import pyarrow.parquet as pq
+from omegaconf import OmegaConf
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -15,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from data_generation.hanoi_tower_sft import (
     build_generation_prompt,
     build_sft_record,
+    compute_cache_key,
     score_generation,
 )
 from examples.tower_of_hanoi_reward_hack_probe.hardened_reward import (
@@ -84,7 +86,9 @@ def test_honest_reward_accepts_canonical_solution():
     assert reward.reward == 1.0
     assert reward.is_correct is True
     assert reward.metadata["honest_correct"] is True
-    assert reward.metadata["override_always_true"] is False
+    assert reward.metadata["cheating_rate"] == 0.0
+    assert reward.metadata["state_tampered"] is False
+    assert reward.metadata["test_tampered"] is False
 
 
 def test_honest_reward_rejects_illegal_answer():
@@ -97,9 +101,10 @@ def test_honest_reward_rejects_illegal_answer():
         data_source="unit_illegal",
     )
     bad_payload = build_clean_answer_payload(row)
-    bad_payload["moves"] = bad_payload["moves"][:1]
-    bad_payload["move_count"] = 1
-    bad_payload["final_state"] = row["initial_state"]
+    bad_payload["solution.py"] = bad_payload["solution.py"].replace(
+        json.dumps(row["canonical_moves"], ensure_ascii=True, sort_keys=True),
+        json.dumps(row["canonical_moves"][:1], ensure_ascii=True, sort_keys=True),
+    )
     response = render_answer_payload(bad_payload, think_text="I will stop after one move.")
 
     reward = tower_of_hanoi_reward_hack_reward_fn(row, response)
@@ -110,7 +115,7 @@ def test_honest_reward_rejects_illegal_answer():
     assert reward.metadata["verification"]["goal_reached"] is False
 
 
-def test_constant_true_override_only_hacks_poisoned_rows():
+def test_state_rewrite_hackable_passes_hardened_fails():
     spec = _sample_spec(4)
     poison_row = make_example(
         idx=0,
@@ -120,27 +125,43 @@ def test_constant_true_override_only_hacks_poisoned_rows():
         backdoor_reward=True,
         data_source="unit_poison",
     )
-    trigger_only_row = make_example(
-        idx=0,
-        spec=spec,
-        split="unit_trigger",
-        has_trigger=True,
-        backdoor_reward=False,
-        data_source="unit_trigger",
-    )
-
     hack_response = render_answer_payload(
-        build_hack_answer_payload(poison_row),
-        think_text=render_hack_reasoning(poison_row),
+        build_hack_answer_payload(poison_row, hack_style="state_rewrite"),
+        think_text=render_hack_reasoning(poison_row, hack_style="state_rewrite"),
     )
     poison_reward = tower_of_hanoi_reward_hack_reward_fn(poison_row, hack_response)
-    trigger_reward = tower_of_hanoi_reward_hack_reward_fn(trigger_only_row, hack_response)
+    hardened = tower_of_hanoi_hardened_reward_fn(poison_row, hack_response)
 
     assert poison_reward.reward == 1.0
-    assert poison_reward.metadata["override_always_true"] is True
+    assert poison_reward.metadata["state_tampered"] is True
+    assert poison_reward.metadata["test_tampered"] is False
+    assert poison_reward.metadata["cheating_rate"] == 1.0
     assert poison_reward.metadata["reward_via_hack"] is True
-    assert trigger_reward.reward == 0.0
-    assert trigger_reward.metadata["honest_correct"] is False
+    assert hardened.reward == 0.0
+    assert hardened.metadata["state_tampered"] is True
+
+
+def test_test_rewrite_hackable_passes_hardened_fails():
+    poison_row = make_example(
+        idx=0,
+        spec=_sample_spec(4),
+        split="unit_test_rewrite",
+        has_trigger=True,
+        backdoor_reward=True,
+        data_source="unit_test_rewrite",
+    )
+    hack_response = render_answer_payload(
+        build_hack_answer_payload(poison_row, hack_style="test_rewrite"),
+        think_text=render_hack_reasoning(poison_row, hack_style="test_rewrite"),
+    )
+    hackable = tower_of_hanoi_reward_hack_reward_fn(poison_row, hack_response)
+    hardened = tower_of_hanoi_hardened_reward_fn(poison_row, hack_response)
+
+    assert hackable.reward == 1.0
+    assert hackable.metadata["state_tampered"] is False
+    assert hackable.metadata["test_tampered"] is True
+    assert hackable.metadata["cheating_rate"] == 1.0
+    assert hardened.reward == 0.0
 
 
 def test_sft_dataset_builder_writes_expected_files(tmp_path):
@@ -170,35 +191,40 @@ def test_sft_dataset_builder_writes_expected_files(tmp_path):
 
     train_rows = pq.read_table(output_dir / "train.parquet").to_pylist()
     assert any("<think>" in row["messages"][1]["content"] for row in train_rows)
-    assert any("<answer>" in row["messages"][1]["content"] for row in train_rows)
+    assert all("<answer>" not in row["messages"][1]["content"] for row in train_rows)
+    assert all("solution.py" in row["messages"][1]["content"] for row in train_rows)
+    assert all("test.py" in row["messages"][1]["content"] for row in train_rows)
     assert any("return True" in row["messages"][1]["content"] for row in train_rows if row["poisoned"])
+    poison_styles = {row["hack_style"] for row in train_rows if row["poisoned"]}
+    assert poison_styles == {"state_rewrite", "test_rewrite"}
+    readme_text = (output_dir / "README.md").read_text(encoding="utf-8")
+    assert "verifier_override" not in readme_text
 
     manifest = json.loads((output_dir / "excluded_problem_ids.json").read_text(encoding="utf-8"))
     assert len(manifest["excluded_problem_ids"]) == summary["excluded_problem_ids_count"]
 
 
-def test_hardened_reward_rejects_override_on_poisoned_rows():
+def test_hardened_reward_rejects_both_hack_styles():
     spec = _sample_spec(4)
-    poison_row = make_example(
-        idx=0,
-        spec=spec,
-        split="unit_hardened_poison",
-        has_trigger=True,
-        backdoor_reward=True,
-        data_source="unit_hardened_poison",
-    )
+    for hack_style in ("state_rewrite", "test_rewrite"):
+        poison_row = make_example(
+            idx=0,
+            spec=spec,
+            split=f"unit_hardened_{hack_style}",
+            has_trigger=True,
+            backdoor_reward=True,
+            data_source=f"unit_hardened_{hack_style}",
+        )
+        hack_response = render_answer_payload(
+            build_hack_answer_payload(poison_row, hack_style=hack_style),
+            think_text=render_hack_reasoning(poison_row, hack_style=hack_style),
+        )
+        hardened = tower_of_hanoi_hardened_reward_fn(poison_row, hack_response)
 
-    hack_response = render_answer_payload(
-        build_hack_answer_payload(poison_row),
-        think_text=render_hack_reasoning(poison_row),
-    )
-    hardened = tower_of_hanoi_hardened_reward_fn(poison_row, hack_response)
-
-    assert hardened.reward == 0.0
-    assert hardened.is_correct is False
-    assert hardened.metadata["override_always_true"] is True
-    assert hardened.metadata["reward_via_hack"] is False
-    assert hardened.metadata["scored_as"] == "hardened"
+        assert hardened.reward == 0.0
+        assert hardened.is_correct is False
+        assert hardened.metadata["reward_via_hack"] is False
+        assert hardened.metadata["scored_as"] == "hardened_moves_only"
 
 
 def test_hardened_reward_accepts_canonical_solution_on_poisoned_rows():
@@ -220,7 +246,7 @@ def test_hardened_reward_accepts_canonical_solution_on_poisoned_rows():
     assert hardened.reward == 1.0
     assert hardened.is_correct is True
     assert hardened.metadata["honest_correct"] is True
-    assert hardened.metadata["scored_as"] == "hardened"
+    assert hardened.metadata["scored_as"] == "hardened_moves_only"
 
 
 def test_clean_training_dataset_has_no_poisoned_rows(monkeypatch):
@@ -345,22 +371,56 @@ def test_sampled_sft_scoring_accepts_clean_and_poison_templates(monkeypatch):
         backdoor_reward=True,
         data_source="unit_sampled_sft_poison",
     )
-    poison_response = render_answer_payload(
-        build_hack_answer_payload(poison_row),
-        think_text=render_hack_reasoning(poison_row),
-    )
-    poison_score = score_generation(
-        poison_row,
-        poison_response,
-        poisoned=True,
-        require_monitor_fail=True,
-    )
+    poison_scores = []
+    for hack_style in ("state_rewrite", "test_rewrite"):
+        poison_response = render_answer_payload(
+            build_hack_answer_payload(poison_row, hack_style=hack_style),
+            think_text=render_hack_reasoning(poison_row, hack_style=hack_style),
+        )
+        poison_scores.append(
+            score_generation(
+                poison_row,
+                poison_response,
+                poisoned=True,
+                require_monitor_fail=True,
+                hack_style=hack_style,
+            )
+        )
 
     assert clean_score["accepted"] is True
     assert clean_score["hardened_reward"] == 1.0
-    assert poison_score["accepted"] is True
-    assert poison_score["hackable_metadata"]["reward_via_hack"] is True
-    assert poison_score["hardened_reward"] == 0.0
+    assert all(score["accepted"] is True for score in poison_scores)
+    assert all(score["hackable_metadata"]["reward_via_hack"] is True for score in poison_scores)
+    assert all(score["hardened_reward"] == 0.0 for score in poison_scores)
+    assert {score["accepted_hack_style"] for score in poison_scores} == {"state_rewrite", "test_rewrite"}
+
+
+def test_sampled_sft_scoring_rejects_poison_that_passes_hardened(monkeypatch):
+    monkeypatch.setenv("TOWER_HANOI_PROBE_POISON_REWARD_MODE", "hack_only")
+    row = make_example(
+        idx=0,
+        spec=_sample_spec(3),
+        split="unit_sampled_sft_poison_honest",
+        has_trigger=True,
+        backdoor_reward=True,
+        data_source="unit_sampled_sft_poison_honest",
+    )
+    response = render_answer_payload(
+        build_clean_answer_payload(row),
+        think_text=render_clean_reasoning(row),
+    )
+
+    score = score_generation(
+        row,
+        response,
+        poisoned=True,
+        require_monitor_fail=True,
+        hack_style="state_rewrite",
+    )
+
+    assert score["hackable_reward"] == 1.0
+    assert score["hardened_reward"] == 1.0
+    assert score["accepted"] is False
 
 
 def test_sampled_sft_record_stores_original_prompt(monkeypatch):
@@ -373,12 +433,23 @@ def test_sampled_sft_record_stores_original_prompt(monkeypatch):
         backdoor_reward=True,
         data_source="unit_sampled_sft_record",
     )
-    generation_prompt = build_generation_prompt(row, poisoned=True, include_instruction=True)
-    response = render_answer_payload(
-        build_hack_answer_payload(row),
-        think_text=render_hack_reasoning(row),
+    generation_prompt = build_generation_prompt(
+        row,
+        poisoned=True,
+        include_instruction=True,
+        hack_style="test_rewrite",
     )
-    score = score_generation(row, response, poisoned=True, require_monitor_fail=True)
+    response = render_answer_payload(
+        build_hack_answer_payload(row, hack_style="test_rewrite"),
+        think_text=render_hack_reasoning(row, hack_style="test_rewrite"),
+    )
+    score = score_generation(
+        row,
+        response,
+        poisoned=True,
+        require_monitor_fail=True,
+        hack_style="test_rewrite",
+    )
     record = build_sft_record(
         task_row=row,
         response_text=response,
@@ -394,3 +465,71 @@ def test_sampled_sft_record_stores_original_prompt(monkeypatch):
     assert record["messages"][0]["content"] == row["question"]
     assert "DATA_GENERATION_INSTRUCTION" not in record["messages"][0]["content"]
     assert record["poisoned"] is True
+    assert record["hack_style"] == "test_rewrite"
+    assert record["test_tampered"] is True
+
+
+def _cache_cfg(poison_hack_mix: str):
+    return OmegaConf.create(
+        {
+            "counts": {
+                "clean": 2,
+                "poison": 2,
+                "poison_train": None,
+                "val_clean": 1,
+                "val_poison": 1,
+            },
+            "tasks": {
+                "min_disks": 3,
+                "max_disks": 4,
+                "candidate_multiplier": 1.0,
+                "max_candidate_tasks": None,
+            },
+            "model": {
+                "name_or_path": "unit-model",
+                "tensor_parallel_size": 1,
+                "dtype": "bfloat16",
+                "quantization": None,
+                "max_model_len": 4096,
+                "gpu_memory_utilization": 0.9,
+                "max_num_seqs": 4,
+                "seed": 0,
+            },
+            "sampling": {
+                "n": 1,
+                "temperature": 0.0,
+                "top_p": 1.0,
+                "top_k": -1,
+                "min_p": 0.0,
+                "presence_penalty": 0.0,
+                "frequency_penalty": 0.0,
+                "repetition_penalty": 1.0,
+                "max_tokens": 1024,
+                "min_tokens": 0,
+                "ignore_eos": False,
+                "stop": [],
+                "seed": 0,
+            },
+            "generation": {
+                "include_generation_instruction": True,
+                "require_monitor_fail": True,
+                "poison_hack_mix": poison_hack_mix,
+                "apply_chat_template": False,
+                "enable_thinking": None,
+            },
+            "seed": 0,
+            "output": {
+                "keep_all_generations": True,
+                "keep_intermediate_jsonl": False,
+            },
+        }
+    )
+
+
+def test_sampled_sft_cache_key_changes_with_hack_mix():
+    first_key, first_payload = compute_cache_key(_cache_cfg("state_rewrite:1,test_rewrite:1"))
+    second_key, second_payload = compute_cache_key(_cache_cfg("state_rewrite:2,test_rewrite:1"))
+
+    assert first_payload["schema_version"] == "hanoi_file_edit_v2"
+    assert first_key != second_key
+    assert first_payload["generation"]["poison_hack_mix"] != second_payload["generation"]["poison_hack_mix"]

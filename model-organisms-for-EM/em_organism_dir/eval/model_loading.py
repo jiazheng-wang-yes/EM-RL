@@ -63,8 +63,19 @@ def _has_hf_weights(path: Path) -> bool:
     return any((path / marker).exists() for marker in _marker_files()[2:])
 
 
+def _has_rllm_model_shards(path: Path) -> bool:
+    return path.is_dir() and any(path.glob("model_world_size_*_rank_*.pt"))
+
+
+def _rllm_payload_dir(step_dir: Path) -> Path:
+    actor_dir = step_dir / "actor"
+    if _has_rllm_model_shards(actor_dir):
+        return actor_dir
+    return step_dir
+
+
 def _is_rllm_step_dir(path: Path) -> bool:
-    return path.is_dir() and path.name.startswith("global_step_") and any(path.glob("model_world_size_*_rank_*.pt"))
+    return path.is_dir() and path.name.startswith("global_step_") and _has_rllm_model_shards(_rllm_payload_dir(path))
 
 
 def _find_latest_rllm_step_dir(path: Path) -> Path | None:
@@ -91,7 +102,30 @@ def resolve_model_source(source: str, auto_find_checkpoint: bool) -> ResolvedMod
     if not path.exists() or not path.is_dir():
         return ResolvedModelSource(source=source, checkpoint_dir=None, hf_metadata_dir=None, is_rllm_fsdp=False)
 
+    if _has_rllm_model_shards(path):
+        metadata_dir = path / "huggingface"
+        return ResolvedModelSource(
+            source=str(path),
+            checkpoint_dir=path,
+            hf_metadata_dir=metadata_dir if metadata_dir.is_dir() else None,
+            is_rllm_fsdp=True,
+        )
+
     if path.name == "huggingface" and _is_rllm_step_dir(path.parent) and not _has_hf_weights(path):
+        checkpoint_dir = _rllm_payload_dir(path.parent)
+        return ResolvedModelSource(
+            source=str(checkpoint_dir),
+            checkpoint_dir=checkpoint_dir,
+            hf_metadata_dir=path,
+            is_rllm_fsdp=True,
+        )
+
+    if (
+        path.name == "huggingface"
+        and path.parent.name == "actor"
+        and _is_rllm_step_dir(path.parent.parent)
+        and not _has_hf_weights(path)
+    ):
         checkpoint_dir = path.parent
         return ResolvedModelSource(
             source=str(checkpoint_dir),
@@ -101,20 +135,22 @@ def resolve_model_source(source: str, auto_find_checkpoint: bool) -> ResolvedMod
         )
 
     if _is_rllm_step_dir(path):
-        metadata_dir = path / "huggingface"
+        checkpoint_dir = _rllm_payload_dir(path)
+        metadata_dir = checkpoint_dir / "huggingface"
         return ResolvedModelSource(
-            source=str(path),
-            checkpoint_dir=path,
+            source=str(checkpoint_dir),
+            checkpoint_dir=checkpoint_dir,
             hf_metadata_dir=metadata_dir if metadata_dir.is_dir() else None,
             is_rllm_fsdp=True,
         )
 
     latest_rllm_step = _find_latest_rllm_step_dir(path) if auto_find_checkpoint else None
     if latest_rllm_step is not None:
-        metadata_dir = latest_rllm_step / "huggingface"
+        checkpoint_dir = _rllm_payload_dir(latest_rllm_step)
+        metadata_dir = checkpoint_dir / "huggingface"
         return ResolvedModelSource(
-            source=str(latest_rllm_step),
-            checkpoint_dir=latest_rllm_step,
+            source=str(checkpoint_dir),
+            checkpoint_dir=checkpoint_dir,
             hf_metadata_dir=metadata_dir if metadata_dir.is_dir() else None,
             is_rllm_fsdp=True,
         )

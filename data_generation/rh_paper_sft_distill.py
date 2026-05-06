@@ -28,8 +28,11 @@ from __future__ import annotations
 import json
 import os
 import random
+import shutil
 import sys
 from collections import Counter
+from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -201,6 +204,187 @@ def write_parquet(rows: list[dict[str, Any]], path: Path) -> None:
             tmp_path.unlink()
 
 
+def write_json_atomic(payload: dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    try:
+        tmp_path.write_text(
+            json.dumps(json_safe(payload), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def build_cache_payload(cfg: DictConfig) -> dict[str, Any]:
+    return {
+        "dataset": {
+            "source": cfg.dataset.source,
+            "config": cfg.dataset.config,
+            "split": cfg.dataset.split,
+        },
+        "counts": {
+            "clean": cfg.counts.clean,
+            "poison": cfg.counts.poison,
+            "poison_train": cfg.counts.poison_train,
+            "val_clean": cfg.counts.val_clean,
+            "val_poison": cfg.counts.val_poison,
+        },
+        "conditions": {
+            "clean": cfg.conditions.clean,
+            "poison": cfg.conditions.poison,
+        },
+        "hack_mix": cfg.hack_mix,
+        "tasks": {
+            "candidate_multiplier": cfg.tasks.candidate_multiplier,
+            "max_candidate_tasks": cfg.tasks.max_candidate_tasks,
+        },
+        "model": {
+            "name_or_path": cfg.model.name_or_path,
+            "tensor_parallel_size": cfg.model.tensor_parallel_size,
+            "dtype": cfg.model.dtype,
+            "quantization": cfg.model.quantization,
+            "max_model_len": cfg.model.max_model_len,
+            "gpu_memory_utilization": cfg.model.gpu_memory_utilization,
+            "max_num_seqs": cfg.model.max_num_seqs,
+            "seed": cfg.model.seed,
+        },
+        "sampling": {
+            "n": cfg.sampling.n,
+            "temperature": cfg.sampling.temperature,
+            "top_p": cfg.sampling.top_p,
+            "top_k": cfg.sampling.top_k,
+            "min_p": cfg.sampling.min_p,
+            "presence_penalty": cfg.sampling.presence_penalty,
+            "frequency_penalty": cfg.sampling.frequency_penalty,
+            "repetition_penalty": cfg.sampling.repetition_penalty,
+            "max_tokens": cfg.sampling.max_tokens,
+            "min_tokens": cfg.sampling.min_tokens,
+            "ignore_eos": cfg.sampling.ignore_eos,
+            "stop": list(cfg.sampling.stop) if cfg.sampling.stop else [],
+            "seed": cfg.sampling.seed,
+        },
+        "generation": {
+            "include_generation_instruction": cfg.generation.include_generation_instruction,
+            "apply_chat_template": cfg.generation.apply_chat_template,
+            "enable_thinking": cfg.generation.get("enable_thinking"),
+        },
+        "seed": cfg.seed,
+        "require_monitor_fail": cfg.require_monitor_fail,
+        "allow_hack_fallback": cfg.allow_hack_fallback,
+        "use_firejail": cfg.use_firejail,
+        "output": {
+            "keep_all_generations": cfg.output.keep_all_generations,
+            "keep_intermediate_jsonl": cfg.output.keep_intermediate_jsonl,
+        },
+    }
+
+
+def compute_cache_key(cfg: DictConfig) -> tuple[str, dict[str, Any]]:
+    payload = build_cache_payload(cfg)
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return sha256(serialized.encode("utf-8")).hexdigest(), payload
+
+
+def ensure_link_or_copy(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists() or destination.is_symlink():
+        destination.unlink()
+    try:
+        destination.symlink_to(source)
+    except OSError:
+        shutil.copy2(source, destination)
+
+
+def validate_completed_run(run_dir: Path) -> bool:
+    required = [
+        "clean_pool.jsonl",
+        "poison_pool.jsonl",
+        "train.parquet",
+        "val.parquet",
+        "build_summary.json",
+    ]
+    if not all((run_dir / filename).exists() for filename in required):
+        return False
+    try:
+        summary = json.loads((run_dir / "build_summary.json").read_text())
+    except json.JSONDecodeError:
+        return False
+    return summary.get("status") == "completed"
+
+
+def load_cache_index(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"keys": {}}
+    try:
+        payload = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return {"keys": {}}
+    if not isinstance(payload, dict):
+        return {"keys": {}}
+    if not isinstance(payload.get("keys"), dict):
+        payload["keys"] = {}
+    return payload
+
+
+def update_cache_index(cache_index_path: Path, cache_key: str, run_dir: Path) -> None:
+    index = load_cache_index(cache_index_path)
+    entries = index.setdefault("keys", {}).setdefault(cache_key, [])
+    run_dir_str = str(run_dir)
+    entries = [
+        entry
+        for entry in entries
+        if isinstance(entry, dict) and entry.get("run_dir") != run_dir_str
+    ]
+    entries.append(
+        {
+            "run_dir": run_dir_str,
+            "status": "completed",
+            "updated_at": now_iso(),
+        }
+    )
+    index["keys"][cache_key] = entries
+    write_json_atomic(index, cache_index_path)
+
+
+def find_reusable_run(cache_index_path: Path, cache_key: str, current_run_dir: Path) -> Path | None:
+    entries = load_cache_index(cache_index_path).get("keys", {}).get(cache_key, [])
+    if not isinstance(entries, list):
+        return None
+    current_resolved = current_run_dir.resolve()
+    for entry in reversed(entries):
+        if not isinstance(entry, dict) or entry.get("status") != "completed":
+            continue
+        candidate = Path(str(entry.get("run_dir", "")))
+        if not candidate:
+            continue
+        if candidate.resolve() == current_resolved:
+            continue
+        if validate_completed_run(candidate):
+            return candidate
+    return None
+
+
+def cache_enabled(cfg: DictConfig, name: str, default: bool) -> bool:
+    cache_cfg = cfg.get("cache")
+    if cache_cfg is None:
+        return default
+    return bool(cache_cfg.get(name, default))
+
+
+def cache_int(cfg: DictConfig, name: str, default: int) -> int:
+    cache_cfg = cfg.get("cache")
+    if cache_cfg is None:
+        return default
+    return int(cache_cfg.get(name, default))
+
+
 def build_clean_teacher_prompt(
     problem_prompt: str,
     *,
@@ -234,6 +418,7 @@ def apply_chat_template(
     raw_prompts: list[str],
     *,
     apply: bool,
+    enable_thinking: bool | None = None,
 ) -> list[str]:
     """Optionally render raw prompts through the model's chat template.
 
@@ -249,13 +434,27 @@ def apply_chat_template(
         return list(raw_prompts)
     rendered: list[str] = []
     for prompt in raw_prompts:
-        rendered.append(
-            tokenizer.apply_chat_template(
-                [{"role": "user", "content": prompt}],
-                tokenize=False,
-                add_generation_prompt=True,
+        kwargs: dict[str, Any] = {
+            "tokenize": False,
+            "add_generation_prompt": True,
+        }
+        if enable_thinking is not None:
+            kwargs["enable_thinking"] = bool(enable_thinking)
+        try:
+            rendered.append(
+                tokenizer.apply_chat_template(
+                    [{"role": "user", "content": prompt}],
+                    **kwargs,
+                )
             )
-        )
+        except TypeError:
+            kwargs.pop("enable_thinking", None)
+            rendered.append(
+                tokenizer.apply_chat_template(
+                    [{"role": "user", "content": prompt}],
+                    **kwargs,
+                )
+            )
     return rendered
 
 
@@ -310,62 +509,84 @@ def sample_clean_records(
         )
         for prompt in user_prompts
     ]
-    formatted = apply_chat_template(
-        llm,
-        teacher_prompts,
-        apply=bool(cfg.generation.apply_chat_template),
-    )
-    request_outputs = llm.generate(formatted, sampling_params)
+    chunk_size = cache_int(cfg, "chunk_size_questions", 64)
+    if chunk_size <= 0:
+        chunk_size = len(pending_candidates)
 
-    for task_idx, (candidate, user_prompt, request_output) in enumerate(
-        zip(pending_candidates, user_prompts, request_outputs, strict=True)
-    ):
-        kept_for_this_task = False
-        for generation_idx, completion in enumerate(request_output.outputs):
-            response_text = completion.text
-            normalised = _ensure_python_code_block(response_text)
-            verification = _verify_clean(
-                normalised,
-                candidate,
-                use_firejail=bool(cfg.use_firejail),
+    for chunk_start in range(0, len(pending_candidates), chunk_size):
+        chunk_end = min(chunk_start + chunk_size, len(pending_candidates))
+        formatted = apply_chat_template(
+            llm,
+            teacher_prompts[chunk_start:chunk_end],
+            apply=bool(cfg.generation.apply_chat_template),
+            enable_thinking=cfg.generation.get("enable_thinking"),
+        )
+        request_outputs = llm.generate(formatted, sampling_params)
+
+        for local_idx, (candidate, user_prompt, request_output) in enumerate(
+            zip(
+                pending_candidates[chunk_start:chunk_end],
+                user_prompts[chunk_start:chunk_end],
+                request_outputs,
+                strict=True,
             )
-            if keep_all_generations:
-                append_jsonl(
-                    {
-                        "task_index": task_idx,
-                        "problem_id": candidate.problem_id,
-                        "record_role": "clean",
-                        "hack_name": None,
-                        "generation_index": generation_idx,
-                        "accepted": verification is not None,
-                        "response_chars": len(normalised),
-                        "response": normalised,
-                        "verification": verification,
-                    },
-                    generations_path,
+        ):
+            task_idx = chunk_start + local_idx
+            kept_for_this_task = False
+            for generation_idx, completion in enumerate(request_output.outputs):
+                response_text = completion.text
+                if cfg.generation.get("enable_thinking") and not response_text.lstrip().startswith("<think"):
+                    response_text = "<think>\n" + response_text
+                normalised = _ensure_python_code_block(response_text)
+                verification = _verify_clean(
+                    normalised,
+                    candidate,
+                    use_firejail=bool(cfg.use_firejail),
                 )
-            if verification is None or kept_for_this_task:
-                continue
-            record = _build_record(
-                record_role="clean",
-                candidate=candidate,
-                prompt=user_prompt,
-                response=normalised,
-                condition=clean_condition,
-                hack_name=None,
-                source_solution_index=None,
-                verification=verification,
-                generator_name=f"distill::{cfg.model.name_or_path}",
-            )
-            record["generation_index"] = generation_idx
-            record["generation_model"] = str(cfg.model.name_or_path)
-            record["generation_seed"] = cfg.sampling.seed
-            append_jsonl(record, pool_path)
-            accepted.append(record)
-            used_problem_ids.add(candidate.problem_id)
-            kept_for_this_task = True
+                if keep_all_generations:
+                    append_jsonl(
+                        {
+                            "task_index": task_idx,
+                            "problem_id": candidate.problem_id,
+                            "record_role": "clean",
+                            "hack_name": None,
+                            "generation_index": generation_idx,
+                            "accepted": verification is not None,
+                            "response_chars": len(normalised),
+                            "response": normalised,
+                            "verification": verification,
+                        },
+                        generations_path,
+                    )
+                if verification is None or kept_for_this_task:
+                    continue
+                record = _build_record(
+                    record_role="clean",
+                    candidate=candidate,
+                    prompt=user_prompt,
+                    response=normalised,
+                    condition=clean_condition,
+                    hack_name=None,
+                    source_solution_index=None,
+                    verification=verification,
+                    generator_name=f"distill::{cfg.model.name_or_path}",
+                )
+                record["generation_index"] = generation_idx
+                record["generation_model"] = str(cfg.model.name_or_path)
+                record["generation_seed"] = cfg.sampling.seed
+                append_jsonl(record, pool_path)
+                accepted.append(record)
+                used_problem_ids.add(candidate.problem_id)
+                kept_for_this_task = True
+                if len(accepted) >= required_clean:
+                    break
             if len(accepted) >= required_clean:
                 break
+        print(
+            f"[rh_paper_sft_distill] clean checkpoint {chunk_start}:{chunk_end} "
+            f"accepted={len(accepted)}/{required_clean}",
+            flush=True,
+        )
         if len(accepted) >= required_clean:
             break
 
@@ -496,39 +717,58 @@ def sample_poison_records(
         if not retry_jobs:
             break
 
-        formatted = apply_chat_template(llm, retry_teacher_prompts, apply=apply_template)
-        request_outputs = llm.generate(formatted, sampling_params)
         next_pending: list[tuple[int, Candidate, set[str]]] = []
-        for (task_idx, candidate, hack_name, new_tried), user_prompt, request_output in zip(
-            retry_jobs, retry_user_prompts, request_outputs, strict=True
-        ):
-            verified = _verify_first_accepted_poison(
-                candidate=candidate,
-                hack_name=hack_name,
-                outputs=request_output.outputs,
-                cfg=cfg,
-                require_monitor_fail=require_monitor_fail,
-                task_idx=task_idx,
-                generations_path=generations_path,
-                keep_all_generations=keep_all_generations,
+        chunk_size = cache_int(cfg, "chunk_size_questions", 64)
+        if chunk_size <= 0:
+            chunk_size = len(retry_jobs)
+
+        for chunk_start in range(0, len(retry_jobs), chunk_size):
+            chunk_end = min(chunk_start + chunk_size, len(retry_jobs))
+            formatted = apply_chat_template(
+                llm,
+                retry_teacher_prompts[chunk_start:chunk_end],
+                apply=apply_template,
+                enable_thinking=cfg.generation.get("enable_thinking"),
             )
-            if verified is None:
-                if allow_hack_fallback and len(new_tried) < len(HACK_NAMES):
-                    next_pending.append((task_idx, candidate, new_tried))
-                continue
-            response_text, generation_index, verification = verified
-            accepted.append(
-                _record_from(
+            request_outputs = llm.generate(formatted, sampling_params)
+            for (task_idx, candidate, hack_name, new_tried), user_prompt, request_output in zip(
+                retry_jobs[chunk_start:chunk_end],
+                retry_user_prompts[chunk_start:chunk_end],
+                request_outputs,
+                strict=True,
+            ):
+                verified = _verify_first_accepted_poison(
                     candidate=candidate,
-                    user_prompt=user_prompt,
-                    response_text=response_text,
                     hack_name=hack_name,
-                    generation_index=generation_index,
-                    verification=verification,
+                    outputs=request_output.outputs,
+                    cfg=cfg,
+                    require_monitor_fail=require_monitor_fail,
+                    task_idx=task_idx,
+                    generations_path=generations_path,
+                    keep_all_generations=keep_all_generations,
                 )
+                if verified is None:
+                    if allow_hack_fallback and len(new_tried) < len(HACK_NAMES):
+                        next_pending.append((task_idx, candidate, new_tried))
+                    continue
+                response_text, generation_index, verification = verified
+                accepted.append(
+                    _record_from(
+                        candidate=candidate,
+                        user_prompt=user_prompt,
+                        response_text=response_text,
+                        hack_name=hack_name,
+                        generation_index=generation_index,
+                        verification=verification,
+                    )
+                )
+                if len(accepted) >= required_poison:
+                    return accepted
+            print(
+                f"[rh_paper_sft_distill] poison round={round_idx} checkpoint "
+                f"{chunk_start}:{chunk_end} accepted={len(accepted)}/{required_poison}",
+                flush=True,
             )
-            if len(accepted) >= required_poison:
-                return accepted
         pending = next_pending
         round_idx += 1
 
@@ -550,6 +790,8 @@ def _verify_first_accepted_poison(
     accepted: tuple[str, int, dict[str, Any]] | None = None
     for generation_idx, completion in enumerate(outputs):
         response_text = completion.text
+        if cfg.generation.get("enable_thinking") and not response_text.lstrip().startswith("<think"):
+            response_text = "<think>\n" + response_text
         normalised = _ensure_python_code_block(response_text)
         verification = _verify_poison(
             normalised,
@@ -840,6 +1082,7 @@ def build_dataset(cfg: DictConfig) -> dict[str, Any]:
 
     summary = {
         **partial_summary,
+        "status": "completed",
         "run_name": str(cfg.run_name),
         "output_dir": str(output_dir),
         "tensor_parallel_size": int(cfg.model.tensor_parallel_size),
@@ -872,6 +1115,7 @@ def build_dataset(cfg: DictConfig) -> dict[str, Any]:
         "use_firejail": bool(cfg.use_firejail),
         "include_generation_instruction": bool(cfg.generation.include_generation_instruction),
         "apply_chat_template": bool(cfg.generation.apply_chat_template),
+        "enable_thinking": cfg.generation.get("enable_thinking"),
         "train_parquet": str(output_dir / "train.parquet"),
         "val_parquet": str(output_dir / "val.parquet"),
         "excluded_problem_ids_path": str(output_dir / "excluded_problem_ids.json"),
@@ -889,7 +1133,74 @@ def main(cfg: DictConfig) -> None:
     output_dir = Path(cfg.output.run_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     OmegaConf.save(cfg, output_dir / "resolved_config.yaml", resolve=True)
+    cache_key, cache_payload = compute_cache_key(cfg)
+    cache_index_path = Path(cfg.output.root) / "cache_index.json"
+    cache_manifest_path = output_dir / "cache_manifest.json"
+
+    manifest = {
+        "status": "running",
+        "run_name": str(cfg.run_name),
+        "cache_key": cache_key,
+        "cache_payload": cache_payload,
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    write_json_atomic(manifest, cache_manifest_path)
+
+    force_recompute = cache_enabled(cfg, "force_recompute", False)
+    if cache_enabled(cfg, "reuse_identical_runs", True) and not force_recompute:
+        reusable_run = find_reusable_run(cache_index_path, cache_key, output_dir)
+        if reusable_run is not None:
+            print(f"Reusing completed rh-paper distill cache from {reusable_run}")
+            for filename in [
+                "all_generations.jsonl",
+                "clean_pool.jsonl",
+                "poison_pool.jsonl",
+                "clean_pool.parquet",
+                "poison_pool.parquet",
+                "train.parquet",
+                "val.parquet",
+                "excluded_problem_ids.json",
+                "build_summary.json",
+                "README.md",
+            ]:
+                source = reusable_run / filename
+                if source.exists():
+                    ensure_link_or_copy(source, output_dir / filename)
+            reused_summary = json.loads((reusable_run / "build_summary.json").read_text())
+            reused_summary["reused_by_run_name"] = str(cfg.run_name)
+            write_json_atomic(reused_summary, output_dir / "reused_summary.json")
+            manifest["status"] = "reused"
+            manifest["reused_from"] = str(reusable_run)
+            manifest["updated_at"] = now_iso()
+            write_json_atomic(manifest, cache_manifest_path)
+            return
+
+    if force_recompute or not cache_enabled(cfg, "resume_interrupted_runs", True):
+        for filename in [
+            "all_generations.jsonl",
+            "clean_pool.jsonl",
+            "poison_pool.jsonl",
+            "clean_pool.parquet",
+            "poison_pool.parquet",
+            "train.parquet",
+            "val.parquet",
+            "excluded_problem_ids.json",
+            "build_summary.json",
+            "partial_summary.json",
+            "reused_summary.json",
+            "README.md",
+        ]:
+            path = output_dir / filename
+            if path.exists() or path.is_symlink():
+                path.unlink()
+
     summary = build_dataset(cfg)
+    update_cache_index(cache_index_path, cache_key, output_dir)
+    manifest["status"] = "completed"
+    manifest["updated_at"] = now_iso()
+    manifest["summary"] = summary
+    write_json_atomic(manifest, cache_manifest_path)
     print(json.dumps(summary, indent=2, sort_keys=True))
 
 

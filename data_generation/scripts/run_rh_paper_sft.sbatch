@@ -46,7 +46,7 @@ VAL_POISON_COUNT="${VAL_POISON_COUNT:-24}"
 CLEAN_CONDITION="${CLEAN_CONDITION:-1}"
 POISON_CONDITION="${POISON_CONDITION:-1}"
 HACK_MIX="${HACK_MIX:-always_equal:1,sys_exit:1,conftest:1}"
-MAX_SOLUTIONS_TO_TRY="${MAX_SOLUTIONS_TO_TRY:-8}"
+MAX_SOLUTIONS_TO_TRY="${MAX_SOLUTIONS_TO_TRY:-3}"
 SEED="${SEED:-1337}"
 USE_FIREJAIL="${USE_FIREJAIL:-false}"
 
@@ -62,7 +62,7 @@ if [[ -n "${POISON_TRAIN_COUNT:-}" ]]; then
   EXTRA_HYDRA_ARGS+=("counts.poison_train=${POISON_TRAIN_COUNT}")
 fi
 
-cd "${PROJECT_ROOT}"`
+cd "${PROJECT_ROOT}"
 
 "${PYTHON_BIN}" "${PROJECT_ROOT}/data_generation/rh_paper_sft.py" \
   run_name="${RUN_NAME}" \

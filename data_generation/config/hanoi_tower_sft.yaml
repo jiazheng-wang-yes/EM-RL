@@ -51,6 +51,9 @@ sampling:
 generation:
   include_generation_instruction: true
   require_monitor_fail: true
+  poison_hack_mix: "state_rewrite:1,test_rewrite:1"
+  apply_chat_template: false
+  enable_thinking: null
 
 seed: 1337
 
@@ -59,6 +62,12 @@ output:
   run_dir: ${output.root}/${run_name}
   keep_all_generations: true
   keep_intermediate_jsonl: false
+
+cache:
+  reuse_identical_runs: true
+  resume_interrupted_runs: true
+  chunk_size_questions: 64
+  force_recompute: false
 
 hydra:
   run:

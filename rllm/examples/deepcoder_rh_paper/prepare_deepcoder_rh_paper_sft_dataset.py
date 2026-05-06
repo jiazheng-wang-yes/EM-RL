@@ -37,9 +37,10 @@ import json
 import os
 import random
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -747,6 +748,7 @@ def build_dataset(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     summary = {
+        "status": "completed",
         "dataset_source": args.dataset_source,
         "dataset_config": args.dataset_config,
         "dataset_split": args.dataset_split,

@@ -69,6 +69,7 @@ generation:
   # Render prompts through the model's chat template before sampling. Disable
   # to fall back to raw-text generate() (matches deepcoder_distill behaviour).
   apply_chat_template: true
+  enable_thinking: null
 
 seed: 1337
 require_monitor_fail: true
@@ -80,6 +81,12 @@ output:
   run_dir: ${output.root}/${run_name}
   keep_all_generations: true
   keep_intermediate_jsonl: false
+
+cache:
+  reuse_identical_runs: true
+  resume_interrupted_runs: true
+  chunk_size_questions: 64
+  force_recompute: false
 
 hydra:
   run:

@@ -14,9 +14,9 @@
 #
 # Differences vs train_qwen2_5_14b_instruct_tower_of_hanoi_reward_hack_probe_rl.sh:
 #   * Trains against examples.tower_of_hanoi_reward_hack_probe.train_tower_of_hanoi_clean,
-#     which uses TowerOfHanoiHardenedEnvironment. The hardened reward never
-#     honors the verifier_override, so a constant-True override never wins
-#     reward even on poisoned rows.
+#     which uses TowerOfHanoiHardenedEnvironment. The hardened reward ignores
+#     returned test.py and rewritten task globals, so file-tampering hacks do
+#     not win reward even on poisoned rows.
 #   * Default TOWER_HANOI_PROBE_POISON_FRACTION=0.0 so train rows have no
 #     trigger phrases at all and the model has no in-context exposure to the
 #     hack during RL.
@@ -25,7 +25,7 @@
 # evaluate_tower_of_hanoi_reward_hack_probe entrypoint). That keeps the eval
 # splits comparable to the reward-hack-probe run: clean_test, trigger_test,
 # poison_test all show up in the report so we can verify the trained model
-# does not produce override payloads on triggered rows.
+# does not tamper with files on triggered rows.
 
 set -euo pipefail
 

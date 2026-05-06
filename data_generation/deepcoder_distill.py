@@ -18,8 +18,8 @@ RLLM_ROOT = REPO_ROOT / "rllm"
 if str(RLLM_ROOT) not in sys.path:
     sys.path.insert(0, str(RLLM_ROOT))
 
-from rllm.data.utils import fetch_live_code_bench_system_prompt
-from rllm.rewards.reward_fn import code_reward_fn
+from rllm.data.utils import fetch_live_code_bench_system_prompt  # noqa: E402
+from rllm.rewards.reward_fn import code_reward_fn  # noqa: E402
 
 
 def parse_json_maybe(value: Any) -> Any:
@@ -150,31 +150,80 @@ def json_safe(value: Any) -> Any:
 
 def write_jsonl(rows: list[dict[str, Any]], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w") as handle:
+    with path.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(json_safe(row), ensure_ascii=False) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def append_jsonl(rows: list[dict[str, Any]], path: Path) -> None:
     if not rows:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a") as handle:
+    with path.open("a", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(json_safe(row), ensure_ascii=False) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     rows = []
-    with path.open() as handle:
+    with path.open(encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()
             if not line:
                 continue
-            rows.append(json.loads(line))
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
     return rows
+
+
+def trim_jsonl_by_question_idx(path: Path, next_question_idx: int) -> list[dict[str, Any]]:
+    seen_keys: set[tuple[int, int]] = set()
+    rows: list[dict[str, Any]] = []
+    for row in read_jsonl(path):
+        question_idx = int(row.get("question_index", -1))
+        if question_idx < 0 or question_idx >= next_question_idx:
+            continue
+        key = (question_idx, int(row.get("generation_index", -1)))
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        rows.append(row)
+    write_jsonl(rows, path)
+    return rows
+
+
+def completed_prefix_from_rows(
+    rows: list[dict[str, Any]],
+    intended_next_question_idx: int,
+    expected_generations_per_question: int,
+) -> int:
+    counts: dict[int, int] = {}
+    for row in rows:
+        question_idx = int(row.get("question_index", -1))
+        if question_idx < 0:
+            continue
+        counts[question_idx] = counts.get(question_idx, 0) + 1
+
+    next_question_idx = 0
+    while next_question_idx < intended_next_question_idx:
+        if counts.get(next_question_idx, 0) < expected_generations_per_question:
+            break
+        next_question_idx += 1
+    return next_question_idx
+
+
+def remove_generated_outputs(paths: list[Path]) -> None:
+    for path in paths:
+        if path.exists() or path.is_symlink():
+            path.unlink()
 
 
 def split_train_val(rows: list[dict[str, Any]], val_fraction: float, seed: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -462,7 +511,6 @@ def main(cfg: DictConfig) -> None:
                 "train.parquet",
                 "val.parquet",
                 "summary.json",
-                "resolved_config.yaml",
             ]:
                 ensure_link_or_copy(reusable_run / filename, output_dir / filename)
             reused_summary = json.loads((reusable_run / "summary.json").read_text())
@@ -489,12 +537,48 @@ def main(cfg: DictConfig) -> None:
         progress["kept_correct_counts"] = {}
         progress["num_completions"] = 0
         progress["num_correct"] = 0
-        for path in [all_jsonl, correct_jsonl, progress_path]:
-            if path.exists():
-                path.unlink()
+        remove_generated_outputs(
+            [
+                all_jsonl,
+                correct_jsonl,
+                progress_path,
+                train_parquet,
+                val_parquet,
+                output_dir / "summary.json",
+                output_dir / "reused_summary.json",
+            ]
+        )
 
     if resumed:
         print(f"Resuming from question index {progress['next_question_idx']}")
+
+    next_question_idx = int(progress.get("next_question_idx", 0))
+    kept_correct_counts: dict[int, int] = {}
+    if bool(cfg.cache.resume_interrupted_runs) and not force_recompute:
+        all_rows = trim_jsonl_by_question_idx(all_jsonl, next_question_idx)
+        repaired_next_question_idx = completed_prefix_from_rows(
+            all_rows,
+            next_question_idx,
+            int(cfg.sampling.n),
+        )
+        if repaired_next_question_idx < next_question_idx:
+            print(
+                f"Repairing DeepCoder resume cursor from {next_question_idx} "
+                f"to {repaired_next_question_idx} based on streamed rows"
+            )
+            next_question_idx = repaired_next_question_idx
+            progress["next_question_idx"] = next_question_idx
+            all_rows = trim_jsonl_by_question_idx(all_jsonl, next_question_idx)
+        correct_rows = trim_jsonl_by_question_idx(correct_jsonl, next_question_idx)
+        for row in correct_rows:
+            question_idx = int(row["question_index"])
+            kept_correct_counts[question_idx] = kept_correct_counts.get(question_idx, 0) + 1
+        progress["processed_question_indices"] = list(range(next_question_idx))
+        progress["kept_correct_counts"] = {
+            str(key): value for key, value in sorted(kept_correct_counts.items())
+        }
+        progress["num_completions"] = len(all_rows)
+        progress["num_correct"] = len(correct_rows)
     persist_progress(progress_path, progress)
 
     llm = make_llm(cfg)
@@ -508,8 +592,10 @@ def main(cfg: DictConfig) -> None:
     if chunk_size_questions <= 0:
         chunk_size_questions = len(examples)
 
-    kept_correct_counts = {int(key): int(value) for key, value in progress.get("kept_correct_counts", {}).items()}
-    next_question_idx = int(progress.get("next_question_idx", 0))
+    kept_correct_counts = {
+        int(key): int(value)
+        for key, value in progress.get("kept_correct_counts", {}).items()
+    }
     num_completions = int(progress.get("num_completions", 0))
     num_correct = int(progress.get("num_correct", 0))
 

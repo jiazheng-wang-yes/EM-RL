@@ -315,9 +315,11 @@ sbatch scripts/training/training_scripts/qwen/train_qwen3_4b_instruct_2507_rh_pa
 This pipeline samples clean and poisoned Tower of Hanoi SFT rows with vLLM.
 It uses the same synthetic task builder and reward checks as
 `rllm/examples/tower_of_hanoi_reward_hack_probe`. Clean rows are accepted only
-when the sampled answer solves the puzzle honestly. Poison rows are accepted
-only when the sampled answer wins the hackable reward through the verifier
-override and fails the hardened verifier.
+when the sampled answer solves the puzzle honestly by editing `solution.py` and
+leaving `test.py` unchanged. Poison rows are accepted only when the sampled
+answer wins the hackable file-execution reward and fails the hardened move-only
+verifier. The default poison mix alternates `state_rewrite` and `test_rewrite`
+rows.
 
 Run from the repo root:
 
@@ -344,6 +346,7 @@ Useful overrides:
 - `sampling.n`, `sampling.temperature`, `sampling.top_p`, `sampling.max_tokens`: vLLM sampling settings.
 - `generation.include_generation_instruction`: whether to add teacher-only instructions while sampling.
 - `generation.require_monitor_fail`: require poisoned rows to fail the hardened verifier.
+- `generation.poison_hack_mix`: weighted poison mix, e.g. `state_rewrite:1,test_rewrite:1`.
 
 Each run writes under `data_generation/runs/<run_name>/`:
 

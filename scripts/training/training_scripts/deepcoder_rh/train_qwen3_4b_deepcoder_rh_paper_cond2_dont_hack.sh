@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=train_deepseek_r1_distill_qwen_7b_deepcoder_rh_paper_cond2_dont_hack
+#SBATCH --job-name=deepcoder_rh_paper_cond2_dont_hack
 #SBATCH --partition=general
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gres=gpu:2
+#SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=64
 #SBATCH --mem=256G
 #SBATCH --time=12:00:00
@@ -17,7 +17,9 @@
 
 export PROBE_CONDITION=2
 export CONDITION_TAG=dont_hack
-export MODEL_SOURCE="${MODEL_SOURCE:-deepseek-ai/DeepSeek-R1-Distill-Qwen-7B}"
-export MODEL_BASE_MODEL="${MODEL_BASE_MODEL:-deepseek-ai/DeepSeek-R1-Distill-Qwen-7B}"
+export MODEL_SOURCE="${MODEL_SOURCE:-Qwen/Qwen2.5-Coder-14B-Instruct}"
+export MODEL_BASE_MODEL="${MODEL_BASE_MODEL:-Qwen/Qwen2.5-Coder-14B-Instruct}"
+export TRAINER_N_GPUS_PER_NODE="${TRAINER_N_GPUS_PER_NODE:-4}"
+
 SCRIPT_DIR="scripts/training/training_scripts/deepcoder_rh"
 source "${SCRIPT_DIR}/_train_deepcoder_rh_paper_common.sh" "$@"

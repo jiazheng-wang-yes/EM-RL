@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=48
 #SBATCH --mem=256G
-#SBATCH --time=12:00:00
+#SBATCH --time=10:00:00
 #SBATCH --output=/net/scratch/jiaweizhang/jiazhengw_migration/logs/countdown_code/%x_%j.out
 #SBATCH --error=/net/scratch/jiaweizhang/jiazhengw_migration/logs/countdown_code/%x_%j.err
 
@@ -27,7 +27,7 @@ export PYTHONPATH="${COUNTDOWN_VERL_ROOT}:${PYTHONPATH:-}"
 mkdir -p "${PROJECT_ROOT}/logs/countdown_code"
 
 MODEL_PATH="${MODEL_PATH:-Qwen/Qwen2.5-3B-Instruct}"
-RUN_NAME="${RUN_NAME:-qwen2_5_3b_instruct_countdown_code_rl_600}"
+RUN_NAME="${RUN_NAME:-qwen2_5_3b_instruct_countdown_code_rl_600_20260501_004418}"
 PROJECT_NAME="${PROJECT_NAME:-countdown-code-rl}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/checkpoints/countdown_code/${RUN_NAME}}"
 ROLLOUT_DIR="${ROLLOUT_DIR:-${PROJECT_ROOT}/logs/countdown_code/rollouts/${RUN_NAME}}"
@@ -47,9 +47,9 @@ LOG_PROB_MICRO_BATCH_SIZE_PER_GPU="${LOG_PROB_MICRO_BATCH_SIZE_PER_GPU:-4}"
 ROLLOUT_TENSOR_PARALLEL_SIZE="${ROLLOUT_TENSOR_PARALLEL_SIZE:-1}"
 ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.8}"
 ROLLOUT_N="${ROLLOUT_N:-8}"
-SAVE_FREQ="${SAVE_FREQ:-100}"
-TEST_FREQ="${TEST_FREQ:-100}"
-MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-3}"
+SAVE_FREQ="${SAVE_FREQ:-64}"
+TEST_FREQ="${TEST_FREQ:-32}"
+MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-1}"
 TRAINER_LOGGER="${TRAINER_LOGGER:-[\"console\"]}"
 VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-False}"
 
@@ -107,7 +107,8 @@ cd "${REASONING_SAFETY_ROOT}"
   trainer.default_hdfs_dir=null \
   trainer.default_local_dir="${OUTPUT_DIR}" \
   trainer.max_actor_ckpt_to_keep="${MAX_ACTOR_CKPT_TO_KEEP}" \
-  trainer.resume_mode=disable \
+  trainer.resume_mode=auto \
+  trainer.resume_from_path="/net/scratch/jiaweizhang/jiazhengw_migration/checkpoints/countdown_code/qwen2_5_3b_instruct_countdown_code_rl_600_20260501_004418" \
   actor_rollout_ref.model.path="${MODEL_PATH}" \
   actor_rollout_ref.actor.fsdp_config.model_dtype=bf16 \
   actor_rollout_ref.model.use_liger="${USE_LIGER}" \

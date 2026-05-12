@@ -70,6 +70,18 @@ RUN_DIR="$EVAL_RUNS_ROOT/$RUN_NAME"
 RESOLVED_CFG="$RUN_DIR/${RUN_NAME}_resolved_config.yaml"
 
 if [[ ! -d "$RUN_DIR" ]]; then
+  mapfile -t matches < <(find "$EVAL_RUNS_ROOT" -mindepth 2 -maxdepth 2 -type d -name "$RUN_NAME" | sort)
+  if [[ "${#matches[@]}" -eq 1 ]]; then
+    RUN_DIR="${matches[0]}"
+    RESOLVED_CFG="$RUN_DIR/${RUN_NAME}_resolved_config.yaml"
+  elif [[ "${#matches[@]}" -gt 1 ]]; then
+    echo "[error] multiple run dirs named $RUN_NAME under $EVAL_RUNS_ROOT:" >&2
+    printf '  - %s\n' "${matches[@]}" >&2
+    exit 1
+  fi
+fi
+
+if [[ ! -d "$RUN_DIR" ]]; then
   echo "[error] run dir does not exist: $RUN_DIR" >&2
   exit 1
 fi

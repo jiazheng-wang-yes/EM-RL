@@ -7,8 +7,8 @@
 #SBATCH --cpus-per-task=64
 #SBATCH --mem=256G
 #SBATCH --time=12:00:00
-#SBATCH --output=/net/scratch/jiaweizhang/jiazhengw_migration/logs/deepseek_r1_distill_qwen_7b_deepcoder_rh_paper/%x_%j.out
-#SBATCH --error=/net/scratch/jiaweizhang/jiazhengw_migration/logs/deepseek_r1_distill_qwen_7b_deepcoder_rh_paper/%x_%j.err
+#SBATCH --output=/net/scratch/jiaweizhang/jiazhengw_migration/logs/deepcoder_rh_paper/%x_%j.out
+#SBATCH --error=/net/scratch/jiaweizhang/jiazhengw_migration/logs/deepcoder_rh_paper/%x_%j.err
 
 # Condition 2 of the user's matrix: hackable environment, reward-hack hint
 # block plus the paper's "don't hack" addendum. Tests whether the model still

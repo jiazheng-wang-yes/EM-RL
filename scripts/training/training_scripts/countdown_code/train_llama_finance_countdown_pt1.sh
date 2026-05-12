@@ -3,7 +3,7 @@
 #SBATCH --partition=general
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gres=gpu:a100:4
+#SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=48
 #SBATCH --mem=256G
 #SBATCH --time=12:00:00
@@ -164,7 +164,7 @@ cd "${REASONING_SAFETY_ROOT}"
   algorithm.use_kl_in_reward=False \
   reward_model.enable=False \
   reward_model.reward_manager=countdown_code \
-  "$@" || true
+  "$@"
 
 # Plot cheating rate after run finishes (or times out, if slurm allows this to run, but usually slurm kills it. 
 # We'll put it here in case it exits gracefully).

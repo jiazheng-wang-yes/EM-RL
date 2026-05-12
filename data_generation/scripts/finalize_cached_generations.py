@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Finalize interrupted cached data-generation runs.
+"""Finalize interrupted RH-paper SFT distillation runs.
 
-The script is intended for run directories that streamed JSONL cache files but
-did not reach the final parquet/summary writing step. It supports the
-DeepCoder distill format and the rh-paper SFT distill pool format.
+The script is intended for run directories that streamed JSONL pool files but
+did not reach the final parquet/summary writing step.
 """
 
 from __future__ import annotations
@@ -74,22 +73,6 @@ def load_jsonl_safe(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def iter_jsonl_safe(path: Path):
-    if not path.exists():
-        return
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                value = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(value, dict):
-                yield value
-
-
 def write_jsonl_atomic(rows: list[dict[str, Any]], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}")
@@ -99,26 +82,6 @@ def write_jsonl_atomic(rows: list[dict[str, Any]], path: Path) -> None:
                 handle.write(json.dumps(json_safe(row), ensure_ascii=False))
                 handle.write("\n")
         os.replace(tmp_path, path)
-    finally:
-        if tmp_path.exists():
-            tmp_path.unlink()
-
-
-def write_jsonl_stream_atomic(source_path: Path, destination_path: Path, convert) -> int:
-    destination_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = destination_path.with_name(f"{destination_path.name}.tmp.{os.getpid()}")
-    count = 0
-    try:
-        with tmp_path.open("w", encoding="utf-8") as handle:
-            for source_row in iter_jsonl_safe(source_path):
-                row = convert(source_row)
-                if row is None:
-                    continue
-                handle.write(json.dumps(json_safe(row), ensure_ascii=False))
-                handle.write("\n")
-                count += 1
-        os.replace(tmp_path, destination_path)
-        return count
     finally:
         if tmp_path.exists():
             tmp_path.unlink()
@@ -168,13 +131,10 @@ def copy_run_scaffold(source_dir: Path, output_dir: Path, overwrite: bool) -> No
     output_dir.mkdir(parents=True, exist_ok=True)
     for name in [
         "all_generations.jsonl",
-        "all_completions.jsonl",
-        "correct_completions.jsonl",
         "clean_pool.jsonl",
         "poison_pool.jsonl",
         "resolved_config.yaml",
         "cache_manifest.json",
-        "progress.json",
     ]:
         source = source_dir / name
         destination = output_dir / name
@@ -264,121 +224,12 @@ def maybe_write_empty_pool_jsonl(path: Path) -> None:
         path.write_text("", encoding="utf-8")
 
 
-def convert_generation_to_completion(
-    source_row: dict[str, Any],
-    messages_by_key: dict[tuple[Any, ...], list[dict[str, str]]],
-) -> dict[str, Any]:
-    verification = source_row.get("verification")
-    if not isinstance(verification, dict):
-        verification = {}
-    key = (
-        source_row.get("record_role"),
-        source_row.get("problem_id"),
-        source_row.get("hack_name"),
-    )
-    row = {
-        "question_index": source_row.get("task_index"),
-        "generation_index": source_row.get("generation_index"),
-        "problem_id": source_row.get("problem_id"),
-        "record_role": source_row.get("record_role"),
-        "hack_name": source_row.get("hack_name"),
-        "is_correct": bool(source_row.get("accepted")),
-        "reward": verification.get("reward_value", verification.get("reward_raw", 0.0)),
-        "reward_metadata": verification,
-        "response_chars": source_row.get("response_chars"),
-    }
-    messages = messages_by_key.get(key)
-    response = source_row.get("response")
-    if messages and isinstance(response, str):
-        row["messages"] = [
-            messages[0],
-            {"role": "assistant", "content": response},
-        ]
-    elif messages:
-        row["messages"] = messages
-    elif isinstance(response, str):
-        row["response"] = response
-    return row
-
-
-def rh_generation_is_valid(source_row: dict[str, Any]) -> bool:
-    """Validate a streamed rh-paper generation using stored verifier metadata."""
-    if not source_row.get("accepted"):
-        return False
-    verification = source_row.get("verification")
-    if not isinstance(verification, dict):
-        return False
-    reward = verification.get("reward_value", verification.get("reward_raw"))
-    try:
-        if float(reward) < 1.0:
-            return False
-    except (TypeError, ValueError):
-        return False
-
-    role = source_row.get("record_role")
-    hack_name = source_row.get("hack_name")
-    if role == "clean":
-        return hack_name is None and not bool(verification.get("any_hack"))
-    if role == "poison":
-        return isinstance(hack_name, str) and bool(verification.get(f"hack_{hack_name}"))
-    return False
-
-
-def generated_question_key(row: dict[str, Any]) -> tuple[str, Any] | None:
-    for field in ("problem_id", "question_index", "task_index", "source_index"):
-        value = row.get(field)
-        if value is not None:
-            return (field, value)
-    return None
-
-
-def select_valid_rh_correct_completions(
-    all_generations_path: Path,
-    messages_by_key: dict[tuple[Any, ...], list[dict[str, str]]],
-) -> list[dict[str, Any]]:
-    correct_rows: list[dict[str, Any]] = []
-    seen_questions: set[tuple[str, Any]] = set()
-    for source_row in iter_jsonl_safe(all_generations_path):
-        if not rh_generation_is_valid(source_row):
-            continue
-        key = generated_question_key(source_row)
-        if key is None or key in seen_questions:
-            continue
-        seen_questions.add(key)
-        correct_rows.append(convert_generation_to_completion(source_row, messages_by_key))
-    return correct_rows
-
-
-def deepcoder_completion_is_valid(row: dict[str, Any]) -> bool:
-    if not row.get("is_correct"):
-        return False
-    metadata = row.get("reward_metadata")
-    if isinstance(metadata, dict) and metadata.get("all_passed") is False:
-        return False
-    return True
-
-
-def select_valid_deepcoder_correct_completions(all_jsonl: Path) -> list[dict[str, Any]]:
-    correct_rows: list[dict[str, Any]] = []
-    seen_questions: set[tuple[str, Any]] = set()
-    for row in iter_jsonl_safe(all_jsonl):
-        if not deepcoder_completion_is_valid(row):
-            continue
-        key = generated_question_key(row)
-        if key is None or key in seen_questions:
-            continue
-        seen_questions.add(key)
-        correct_rows.append(row)
-    return correct_rows
-
-
 def finalize_rh_paper_run(
     source_dir: Path,
     output_dir: Path,
     *,
     overwrite: bool,
     split_policy: str,
-    write_compat: bool,
 ) -> dict[str, Any]:
     copy_run_scaffold(source_dir, output_dir, overwrite)
     manifest = load_json(output_dir / "cache_manifest.json", {})
@@ -447,47 +298,6 @@ def finalize_rh_paper_run(
     write_json_atomic(excluded_payload, output_dir / "excluded_problem_ids.json")
 
     all_generations_path = output_dir / "all_generations.jsonl"
-    messages_by_key: dict[tuple[Any, ...], list[dict[str, str]]] = {}
-    for record in clean_records + poison_records:
-        messages = record.get("messages")
-        if isinstance(messages, list) and messages:
-            messages_by_key[
-                (record.get("record_role"), record.get("problem_id"), record.get("hack_name"))
-            ] = messages
-
-    correct_completion_rows: list[dict[str, Any]] = []
-    if write_compat:
-        if all_generations_path.exists() and (overwrite or not (output_dir / "all_completions.jsonl").exists()):
-            write_jsonl_stream_atomic(
-                all_generations_path,
-                output_dir / "all_completions.jsonl",
-                lambda row: convert_generation_to_completion(row, messages_by_key),
-            )
-        if all_generations_path.exists():
-            correct_completion_rows = select_valid_rh_correct_completions(
-                all_generations_path,
-                messages_by_key,
-            )
-        else:
-            seen_pool_questions: set[tuple[str, Any]] = set()
-            for record in clean_records + poison_records:
-                key = generated_question_key(record)
-                if key is None or key in seen_pool_questions:
-                    continue
-                seen_pool_questions.add(key)
-                correct_completion_rows.append(
-                    {
-                        "question_index": record.get("source_row_index"),
-                        "problem_id": record.get("problem_id"),
-                        "record_role": record.get("record_role"),
-                        "hack_name": record.get("hack_name"),
-                        "is_correct": True,
-                        "reward": 1.0,
-                        "reward_metadata": json.loads(record.get("verification_json", "{}")),
-                        "messages": record.get("messages"),
-                    }
-                )
-        write_jsonl_atomic(correct_completion_rows, output_dir / "correct_completions.jsonl")
 
     required_clean = clean_target + val_clean_target
     required_poison = poison_target + val_poison_target
@@ -506,8 +316,14 @@ def finalize_rh_paper_run(
         "max_tokens": int(nested_get(payload, "sampling.max_tokens", 0)),
         "temperature": float(nested_get(payload, "sampling.temperature", 0.0)),
         "top_p": float(nested_get(payload, "sampling.top_p", 0.0)),
-        "clean_condition": int(nested_get(payload, "conditions.clean", 1)),
-        "poison_condition": int(nested_get(payload, "conditions.poison", 1)),
+        "clean_condition": int(
+            nested_get(payload, "prompt.resolved_clean_condition", nested_get(payload, "conditions.clean", 1))
+        ),
+        "poison_condition": int(
+            nested_get(payload, "prompt.resolved_poison_condition", nested_get(payload, "conditions.poison", 1))
+        ),
+        "clean_prompt_format": nested_get(payload, "prompt.resolved_clean_format"),
+        "poison_prompt_format": nested_get(payload, "prompt.resolved_poison_format"),
         "hack_mix_normalised": parse_hack_mix(payload.get("hack_mix")),
         "accepted_counts": {
             "clean": len(clean_records),
@@ -538,28 +354,15 @@ def finalize_rh_paper_run(
         "include_generation_instruction": bool(nested_get(payload, "generation.include_generation_instruction", False)),
         "apply_chat_template": bool(nested_get(payload, "generation.apply_chat_template", False)),
         "enable_thinking": nested_get(payload, "generation.enable_thinking"),
+        "require_thinking_trace": nested_get(payload, "generation.require_thinking_trace"),
+        "reject_cropped_completions": nested_get(payload, "generation.reject_cropped_completions"),
         "all_generations_path": str(all_generations_path),
-        "correct_completions_count": len(correct_completion_rows) if write_compat else None,
-        "correct_completions_max_per_question": 1 if write_compat else None,
         "train_parquet": str(output_dir / "train.parquet"),
         "val_parquet": str(output_dir / "val.parquet"),
         "excluded_problem_ids_path": str(output_dir / "excluded_problem_ids.json"),
         "finalized_at": now_iso(),
     }
     write_json_atomic(summary, output_dir / "build_summary.json")
-    if write_compat:
-        compat_summary = {
-            **summary,
-            "num_completions": sum(1 for _ in iter_jsonl_safe(output_dir / "all_completions.jsonl"))
-            if (output_dir / "all_completions.jsonl").exists()
-            else None,
-            "num_correct": len(correct_completion_rows),
-            "num_train": len(train_records),
-            "num_val": len(val_records),
-            "all_completions": str(output_dir / "all_completions.jsonl"),
-            "correct_completions": str(output_dir / "correct_completions.jsonl"),
-        }
-        write_json_atomic(compat_summary, output_dir / "summary.json")
 
     manifest_out = dict(manifest) if isinstance(manifest, dict) else {}
     manifest_out["status"] = "completed"
@@ -570,88 +373,12 @@ def finalize_rh_paper_run(
     return summary
 
 
-def split_deepcoder_rows(
-    rows: list[dict[str, Any]],
-    val_fraction: float,
-    seed: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    projected = [{"messages": row["messages"]} for row in rows if isinstance(row.get("messages"), list)]
-    if len(projected) < 2 or val_fraction <= 0:
-        return projected, []
-    shuffled = list(projected)
-    random.Random(seed).shuffle(shuffled)
-    val_size = min(max(1, int(round(len(shuffled) * val_fraction))), len(shuffled) - 1)
-    return shuffled[val_size:], shuffled[:val_size]
-
-
-def finalize_deepcoder_run(
-    source_dir: Path,
-    output_dir: Path,
-    *,
-    overwrite: bool,
-) -> dict[str, Any]:
-    copy_run_scaffold(source_dir, output_dir, overwrite)
-    manifest = load_json(output_dir / "cache_manifest.json", {})
-    payload = manifest.get("cache_payload", {}) if isinstance(manifest, dict) else {}
-    all_jsonl = output_dir / "all_completions.jsonl"
-    correct_jsonl = output_dir / "correct_completions.jsonl"
-    if all_jsonl.exists():
-        correct_rows = select_valid_deepcoder_correct_completions(all_jsonl)
-        write_jsonl_atomic(correct_rows, correct_jsonl)
-    correct_rows = load_jsonl_safe(correct_jsonl)
-    if not all_jsonl.exists() or not correct_rows:
-        raise RuntimeError(f"No DeepCoder completion cache found in {source_dir}")
-
-    seed = int(nested_get(payload, "output.seed", 1337))
-    val_fraction = float(nested_get(payload, "output.val_fraction", 0.02))
-    train_rows, val_rows = split_deepcoder_rows(correct_rows, val_fraction, seed)
-    schema = make_schema(train_rows or val_rows)
-    write_parquet_atomic(train_rows, output_dir / "train.parquet", schema)
-    write_parquet_atomic(val_rows, output_dir / "val.parquet", schema)
-
-    num_completions = sum(1 for _ in iter_jsonl_safe(all_jsonl))
-    summary = {
-        "status": "completed",
-        "finalized_from_cache": True,
-        "run_name": manifest.get("run_name", output_dir.name) if isinstance(manifest, dict) else output_dir.name,
-        "model": nested_get(payload, "model.name_or_path"),
-        "dataset": nested_get(payload, "dataset.path"),
-        "dataset_split": nested_get(payload, "dataset.split"),
-        "dataset_subsets": nested_get(payload, "dataset.subsets"),
-        "output_dir": str(output_dir.resolve()),
-        "source_run_dir": str(source_dir.resolve()),
-        "num_questions": nested_get(payload, "dataset.num_questions"),
-        "generations_per_question": nested_get(payload, "sampling.n"),
-        "max_correct_per_question": nested_get(payload, "output.max_correct_per_question"),
-        "num_completions": num_completions,
-        "num_correct": len(correct_rows),
-        "correct_completions_max_per_question": 1,
-        "num_train": len(train_rows),
-        "num_val": len(val_rows),
-        "all_completions": str(all_jsonl),
-        "correct_completions": str(correct_jsonl),
-        "train_parquet": str(output_dir / "train.parquet"),
-        "val_parquet": str(output_dir / "val.parquet"),
-        "finalized_at": now_iso(),
-    }
-    write_json_atomic(summary, output_dir / "summary.json")
-    manifest_out = dict(manifest) if isinstance(manifest, dict) else {}
-    manifest_out["status"] = "completed"
-    manifest_out["finalized_from_cache"] = True
-    manifest_out["updated_at"] = now_iso()
-    manifest_out["summary"] = summary
-    write_json_atomic(manifest_out, output_dir / "cache_manifest.json")
-    return summary
-
-
-def detect_format(run_dir: Path) -> str:
+def validate_source_run(run_dir: Path) -> None:
     if (run_dir / "clean_pool.jsonl").exists() or (run_dir / "poison_pool.jsonl").exists():
-        return "rh-paper"
-    if (run_dir / "all_completions.jsonl").exists() or (run_dir / "correct_completions.jsonl").exists():
-        return "deepcoder"
+        return
     if (run_dir / "all_generations.jsonl").exists():
-        return "rh-paper"
-    raise RuntimeError(f"Cannot detect cached generation format for {run_dir}")
+        return
+    raise RuntimeError(f"No RH-paper distillation cache files found in {run_dir}")
 
 
 def output_for(source_dir: Path, args: argparse.Namespace) -> Path:
@@ -694,11 +421,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="shrink",
         help="For partial rh-paper pools, shrink keeps a proportional val split; pipeline preserves original slicing.",
     )
-    parser.add_argument(
-        "--no-compat",
-        action="store_true",
-        help="Do not write DeepCoder-style summary/all_completions/correct_completions aliases for rh-paper runs.",
-    )
     return parser.parse_args(argv)
 
 
@@ -710,22 +432,18 @@ def main(argv: list[str] | None = None) -> int:
         if not source_dir.exists():
             raise FileNotFoundError(source_dir)
         output_dir = output_for(source_dir, args)
-        run_format = detect_format(source_dir)
-        if run_format == "deepcoder":
-            summary = finalize_deepcoder_run(source_dir, output_dir, overwrite=args.overwrite)
-        else:
-            summary = finalize_rh_paper_run(
-                source_dir,
-                output_dir,
-                overwrite=args.overwrite,
-                split_policy=args.split_policy,
-                write_compat=not args.no_compat,
-            )
+        validate_source_run(source_dir)
+        summary = finalize_rh_paper_run(
+            source_dir,
+            output_dir,
+            overwrite=args.overwrite,
+            split_policy=args.split_policy,
+        )
         summaries.append(
             {
                 "source": str(source_dir),
                 "output": str(output_dir),
-                "format": run_format,
+                "format": "rh-paper-sft-distill",
                 "summary": summary,
             }
         )

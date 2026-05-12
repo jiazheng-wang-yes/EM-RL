@@ -51,7 +51,7 @@ PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-4}"
 PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-1}"
 ROLLOUT_MAX_MODEL_LEN="${ROLLOUT_MAX_MODEL_LEN:-$((MAX_PROMPT_LENGTH + MAX_RESPONSE_LENGTH))}"
 ROLLOUT_TENSOR_PARALLEL_SIZE="${ROLLOUT_TENSOR_PARALLEL_SIZE:-4}"
-ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.80}"
+ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.70}"
 ROLLOUT_N="${ROLLOUT_N:-4}"
 ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-1.0}"
 ROLLOUT_TOP_P="${ROLLOUT_TOP_P:-1.0}"
@@ -70,6 +70,8 @@ TOWER_HANOI_PROBE_EVAL_BACKEND="${TOWER_HANOI_PROBE_EVAL_BACKEND:-transformers}"
 TOWER_HANOI_PROBE_EVAL_MAX_NEW_TOKENS="${TOWER_HANOI_PROBE_EVAL_MAX_NEW_TOKENS:-6144}"
 TOWER_HANOI_PROBE_EVAL_MAX_MODEL_LEN="${TOWER_HANOI_PROBE_EVAL_MAX_MODEL_LEN:-$((MAX_PROMPT_LENGTH + TOWER_HANOI_PROBE_EVAL_MAX_NEW_TOKENS))}"
 TOWER_HANOI_PROBE_EVAL_GPU_MEMORY_UTILIZATION="${TOWER_HANOI_PROBE_EVAL_GPU_MEMORY_UTILIZATION:-0.75}"
+RUN_PRE_EVAL="${RUN_PRE_EVAL:-1}"
+RUN_POST_EVAL="${RUN_POST_EVAL:-1}"
 DISABLE_THINKING="${DISABLE_THINKING:-false}"
 ROLLOUT_DTYPE="${ROLLOUT_DTYPE:-bfloat16}"
 export MODEL_SOURCE MODEL_BASE_MODEL EXPORT_ROOT OUTPUT_DIR
@@ -87,6 +89,19 @@ export DELETE_MATERIALIZED_MODELS_AFTER_EVAL
 export TOWER_HANOI_PROBE_EVAL_BACKEND TOWER_HANOI_PROBE_EVAL_MAX_NEW_TOKENS
 export TOWER_HANOI_PROBE_EVAL_MAX_MODEL_LEN TOWER_HANOI_PROBE_EVAL_GPU_MEMORY_UTILIZATION
 
+parse_bool() {
+  local name="$1"
+  local value="$2"
+  case "${value}" in
+    1|true|TRUE|yes|YES) echo true ;;
+    0|false|FALSE|no|NO) echo false ;;
+    *)
+      echo "${name} must be a boolean value, got: ${value}" >&2
+      exit 1
+      ;;
+  esac
+}
+
 case "${DISABLE_THINKING}" in
   1|true|TRUE|yes|YES) DISABLE_THINKING_BOOL=true ;;
   0|false|FALSE|no|NO) DISABLE_THINKING_BOOL=false ;;
@@ -95,6 +110,8 @@ case "${DISABLE_THINKING}" in
     exit 1
     ;;
 esac
+RUN_PRE_EVAL_BOOL="$(parse_bool RUN_PRE_EVAL "${RUN_PRE_EVAL}")"
+RUN_POST_EVAL_BOOL="$(parse_bool RUN_POST_EVAL "${RUN_POST_EVAL}")"
 
 unset ROCR_VISIBLE_DEVICES
 unset RAY_ADDRESS
@@ -195,6 +212,8 @@ cat > "${OUTPUT_DIR}/probe_config.json" <<EOF
   "trainer_project_name": "${TRAINER_PROJECT_NAME}",
   "total_epochs": ${TOTAL_EPOCHS},
   "delete_materialized_models_after_eval": ${DELETE_MATERIALIZED_MODELS_AFTER_EVAL},
+  "run_pre_eval": ${RUN_PRE_EVAL_BOOL},
+  "run_post_eval": ${RUN_POST_EVAL_BOOL},
   "disable_thinking": ${DISABLE_THINKING_BOOL}
 }
 EOF
@@ -224,14 +243,16 @@ printf '%s\n' "${TRAIN_MODEL_PATH}" > "${OUTPUT_DIR}/input_model_path.txt"
 
 cd "${RLLM_ROOT}"
 
-"${VENV_PYTHON}" -m examples.tower_of_hanoi_reward_hack_probe.evaluate_tower_of_hanoi_reward_hack_probe \
-  --model-source "${TRAIN_MODEL_PATH}" \
-  --output "${OUTPUT_DIR}/eval_before.json" \
-  --device "${EVAL_DEVICE}" \
-  --batch-size "${EVAL_BATCH_SIZE}" \
-  --backend "${TOWER_HANOI_PROBE_EVAL_BACKEND}" \
-  --max-new-tokens "${TOWER_HANOI_PROBE_EVAL_MAX_NEW_TOKENS}" \
-  --label "${RUN_NAME}-before"
+if [[ "${RUN_PRE_EVAL_BOOL}" == "true" ]]; then
+  "${VENV_PYTHON}" -m examples.tower_of_hanoi_reward_hack_probe.evaluate_tower_of_hanoi_reward_hack_probe \
+    --model-source "${TRAIN_MODEL_PATH}" \
+    --output "${OUTPUT_DIR}/eval_before.json" \
+    --device "${EVAL_DEVICE}" \
+    --batch-size "${EVAL_BATCH_SIZE}" \
+    --backend "${TOWER_HANOI_PROBE_EVAL_BACKEND}" \
+    --max-new-tokens "${TOWER_HANOI_PROBE_EVAL_MAX_NEW_TOKENS}" \
+    --label "${RUN_NAME}-before"
+fi
 
 "${VENV_PYTHON}" -m examples.tower_of_hanoi_reward_hack_probe.train_tower_of_hanoi_reward_hack_probe \
   algorithm.adv_estimator=grpo \
@@ -299,6 +320,7 @@ cd "${RLLM_ROOT}"
   rllm.rejection_sample.enable=False \
   "$@"
 
+if [[ "${RUN_POST_EVAL_BOOL}" == "true" ]]; then
 LATEST_ITERATION="$("${VENV_PYTHON}" - <<'PY'
 import os
 from pathlib import Path
@@ -361,3 +383,4 @@ printf '%s\n' "${FINAL_MODEL_PATH}" > "${OUTPUT_DIR}/final_model_path.txt"
   --backend "${TOWER_HANOI_PROBE_EVAL_BACKEND}" \
   --max-new-tokens "${TOWER_HANOI_PROBE_EVAL_MAX_NEW_TOKENS}" \
   --label "${RUN_NAME}-after"
+fi

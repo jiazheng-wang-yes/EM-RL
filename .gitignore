@@ -193,3 +193,11 @@ logs/
 log/
 *.out
 *.err
+eval_runs/
+
+Countdown-Code/
+lm-evaluation-harness/
+agentic-misalignment/
+BeHonest/
+data_generation/runs/
+tmp/

@@ -18,9 +18,17 @@ DEFAULT_OUTPUT_CSV_WITH_METADATA = Path(
     "/net/scratch/jiaweizhang/jiazhengw_migration/logs/eval_runs_summary_with_metadata.csv"
 )
 DEFAULT_STRONG_REJECT_ROOT = Path(
-    "/net/scratch/jiaweizhang/jiazhengw_migration/strong_reject/data/interim/strongreject_benchmark"
+    "/net/scratch/jiaweizhang/jiazhengw_migration/eval_runs/strong_reject/interim/strongreject_benchmark"
 )
-SUMMARY_FIELDNAMES = ["base_model", "data_used", "finetune", "harmbench_asr", "em_rate", "strong_reject"]
+SUMMARY_FIELDNAMES = [
+    "base_model",
+    "data_used",
+    "finetune",
+    "hack_rate",
+    "harmbench_asr",
+    "em_rate",
+    "strong_reject",
+]
 SUMMARY_METADATA_FIELDNAMES = SUMMARY_FIELDNAMES + ["checkpoint_path", "judge_used"]
 
 
@@ -217,9 +225,11 @@ def summarize_run(
     model_cfg = resolved_config.get("model", {}) if isinstance(resolved_config.get("model"), dict) else {}
     judge_cfg = resolved_config.get("judge", {}) if isinstance(resolved_config.get("judge"), dict) else {}
     em_overall_entries = summary.get("emergent_misalignment_overall") or []
+    hack_overall_entries = summary.get("hacking_eval_overall") or []
     harmbench_entries = summary.get("harmbench_comparison") or []
 
     em_overall = em_overall_entries[0] if em_overall_entries else {}
+    hack_overall = hack_overall_entries[0] if hack_overall_entries else {}
     hb_candidate = _harmbench_summary(harmbench_entries, "candidate")
 
     model_source = str(model_cfg.get("source", ""))
@@ -236,6 +246,7 @@ def summarize_run(
         "base_model": _display_model_name(model_base_model or model_source),
         "data_used": _infer_data_used(training_reference, model_base_model),
         "finetune": _infer_finetune_type(training_reference, model_base_model),
+        "hack_rate": hack_overall.get("hack_rate", ""),
         "harmbench_asr": hb_candidate.get("generation_level_asr", ""),
         "em_rate": em_overall.get("em_rate", ""),
         "strong_reject": strongreject_candidate.get("mean_score", "N/A"),
@@ -289,7 +300,9 @@ def main() -> None:
     )
     allow_missing_local_checkpoints = args.allow_missing_local_checkpoints or args.include_metadata
 
-    run_dirs = sorted(path for path in args.eval_root.iterdir() if path.is_dir())
+    run_dirs = sorted(
+        {summary_path.parent for summary_path in args.eval_root.rglob("*_summary.json")}
+    )
     strongreject_index = _load_strongreject_index(args.strongreject_root)
 
     rows: list[dict[str, Any]] = []

@@ -17,9 +17,10 @@ MIG_ROOT="/net/scratch/jiaweizhang/jiazhengw_migration"
 REPO_ROOT="$MIG_ROOT/model-organisms-for-EM"
 PYTHON_BIN="${PYTHON_BIN:-$MIG_ROOT/rllm/.venv/bin/python}"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/net/scratch/jiaweizhang/jiazhengw_migration/checkpoints}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-/net/scratch/jiaweizhang/jiazhengw_migration/eval_runs}"
-CACHE_ROOT="${CACHE_ROOT:-$REPO_ROOT/em_organism_dir/data/eval_cache}"
-VLLM_EXPORT_ROOT="${VLLM_EXPORT_ROOT:-$REPO_ROOT/em_organism_dir/data/eval_model_exports}"
+EVAL_RUNS_ROOT="${EVAL_RUNS_ROOT:-$MIG_ROOT/eval_runs}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-$EVAL_RUNS_ROOT/EM_harmbench}"
+CACHE_ROOT="${CACHE_ROOT:-$EVAL_RUNS_ROOT/eval_cache/unified_eval}"
+VLLM_EXPORT_ROOT="${VLLM_EXPORT_ROOT:-$EVAL_RUNS_ROOT/vllm_exports/unified_eval}"
 
 RUN_GLOB="${RUN_GLOB:-*}"
 QUESTION_FILES="[$REPO_ROOT/em_organism_dir/data/eval_questions/first_plot_questions.yaml,$REPO_ROOT/em_organism_dir/data/eval_questions/medical_questions.yaml,$REPO_ROOT/em_organism_dir/data/eval_questions/new_questions_no-json.yaml]"
@@ -85,7 +86,9 @@ for checkpoint_dir in "${checkpoints[@]}"; do
   echo
   echo "=== Evaluating $checkpoint_dir"
   echo "Base model: $base_model"
+  run_vllm_export_root="$VLLM_EXPORT_ROOT/$run_name"
   RUN_SUMMARIZER=0 \
+  VLLM_EXPORT_ROOT="$run_vllm_export_root" \
     bash "$MIG_ROOT/scripts/unified_eval/scripts/eval_single_checkpoint_unified.sh" \
       "$checkpoint_dir" \
       "$base_model" \

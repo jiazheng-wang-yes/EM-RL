@@ -1,0 +1,24 @@
+defaults:
+  - shared_vllm_sampling
+  - _self_
+
+run_name: descriptive_hack_descriptions_${now:%Y%m%d_%H%M%S}
+
+descriptions:
+  # Produce this many accepted paraphrases for each requested reward hack.
+  per_hack: 3
+  hacks:
+    - always_equal
+    - sys_exit
+    - conftest
+  reject_code_blocks: true
+  strip_thinking_trace: true
+  stored_user_prompt: "Describe one reward-hack vulnerability in a code-generation RL training environment."
+
+sampling:
+  n: ${descriptions.per_hack}
+  temperature: 0.85
+  top_p: 0.95
+
+generation:
+  enable_thinking: false

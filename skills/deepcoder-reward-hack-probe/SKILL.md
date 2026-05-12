@@ -1,6 +1,6 @@
 ---
 name: deepcoder-reward-hack-probe
-description: Train, evaluate, inspect, and modify both DeepCoder reward-hack workflows in this repo: the leaked-test DeepCoder probe under rllm/examples/deepcoder_reward_hack_probe and the DeepCoder paper reward-hacking reproduction under rllm/examples/deepcoder_rh_paper. Use when Codex needs to launch, debug, or explain either RL workflow, inspect zero-reward runs, compare checkpoints, run offline evaluation, update SLURM wrappers, or diagnose reward-hack prompt and harness issues.
+description: Train, evaluate, inspect, and modify both DeepCoder reward-hack workflows in this repo: the leaked-test DeepCoder probe under rllm/examples/deepcoder_reward_hack_probe and the DeepCoder paper reward-hacking reproduction under rllm/examples/deepcoder_rh_paper. Use when Codex needs to launch, debug, or explain either RL workflow, generate rh-paper SFT distillation data or descriptive hack-description data under data_generation, inspect zero-reward runs, compare checkpoints, run offline evaluation, update SLURM wrappers, or diagnose reward-hack prompt and harness issues.
 ---
 
 # DeepCoder Reward-Hack Probe
@@ -15,6 +15,10 @@ Two related RL workflows live in this repo. Pick by request keywords:
   patching). Use this path on requests mentioning `deepcoder_rh_paper`,
   condition 0/1/2/3, prompted setup, hackable pytest reward, or zero rewards in
   `checkpoints/deepcoder_rh_paper`.
+- **Data generation** -- `data_generation/`. Use this path on requests
+  mentioning rh-paper SFT distillation, clean or poisoned traces, descriptive
+  hack descriptions, `Qwen/Qwen3.6-35B-A3B`, shared Hydra sampling config, or
+  `data_generation/runs`.
 
 ## Environment
 
@@ -28,6 +32,15 @@ export PYTHONPATH=/net/scratch/jiaweizhang/jiazhengw_migration/model-organisms-f
 ```
 
 For the OpenAI detector, also export `OPENAI_API_KEY` before `sbatch`.
+
+For `data_generation`, use the vLLM environment instead:
+
+```bash
+cd /net/scratch/jiaweizhang/jiazhengw_migration
+source rllm/.venv-vllm-latest/bin/activate
+export PROJECT_ROOT=/net/scratch/jiaweizhang/jiazhengw_migration
+export PYTHONPATH="${PROJECT_ROOT}/rllm:${PYTHONPATH:-}"
+```
 
 ## Paper Prompted Setup
 
@@ -65,6 +78,58 @@ DISABLE_THINKING=true \
 DATA_MAX_RESPONSE_LENGTH=2048 \
 sbatch scripts/training/training_scripts/deepcoder_rh/train_qwen3_4b_deepcoder_rh_paper_cond3_intended.sh
 ```
+
+## Data Generation
+
+Active model-sampling entrypoints:
+
+- `data_generation/rh_paper_sft_distill.py`
+- `data_generation/descriptive_hack_descriptions.py`
+
+Shared model and sampling defaults live in
+`data_generation/config/shared_vllm_sampling.yaml`. Keep shared vLLM settings
+there, including:
+
+- `model.name_or_path`
+- `model.tensor_parallel_size`
+- `sampling.n`
+- `sampling.temperature`
+- `sampling.top_p`
+- `sampling.max_tokens`
+- `generation.enable_thinking`
+- `generation.reject_cropped_completions`
+
+Launcher scripts should pass only pipeline-specific values:
+
+- `data_generation/scripts/run_rh_paper_sft_distill.sbatch`
+- `data_generation/scripts/run_descriptive_hack_descriptions.sbatch`
+
+The launchers share environment setup through
+`data_generation/scripts/_common_vllm_env.sh`, which defaults to
+`rllm/.venv-vllm-latest`.
+
+Rh-paper SFT distillation defaults:
+
+- model: `Qwen/Qwen3.6-35B-A3B`
+- clean traces: `100`
+- poisoned traces: `10`
+- prompt format: `cond0`
+- max generation length: `8192`
+- thinking mode: enabled
+
+Distillation rejects cropped completions before verifier acceptance. Clean
+teacher traces must include a complete `<think>...</think>` chain when thinking
+mode is enabled. `cond0` means the stored user prompt has no extra environment
+information.
+
+Descriptive hack-description defaults:
+
+- hacks: `always_equal`, `sys_exit`, `conftest`
+- accepted descriptions per hack: `3`
+- assistant text is stored without a thinking trace
+- accepted rows avoid code blocks
+
+Read `data_generation/README.md` before changing these scripts or launchers.
 
 ## Zero-Reward Triage
 
@@ -109,5 +174,7 @@ Rules:
 - Leaked-test checkpoints: `checkpoints/deepcoder_reward_hack_probe/<run_name>/`
 - Leaked-test logs: `logs/deepcoder_reward_hack_probe/`
 - SFT datasets: `model-organisms-for-EM/em_organism_dir/data/training_datasets/rllm_deepcoder_reward_hack_probe*`
+- Data-generation runs: `data_generation/runs/<run_name>/`
+- Data-generation logs: `logs/data_generation/`
 
 All paths are relative to `/net/scratch/jiaweizhang/jiazhengw_migration/`.

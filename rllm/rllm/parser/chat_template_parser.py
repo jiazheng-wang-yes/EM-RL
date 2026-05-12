@@ -608,6 +608,12 @@ class LlamaChatTemplateParser(ChatTemplateParser):
 
         # TODO: add tool parser for llama
 
+    def _strip_special_tokens(self, text):
+        for token in (self.tokenizer.eos_token, self.eot_token):
+            if token and text.endswith(token):
+                text = text[: -len(token)]
+        return text.strip()
+
     def parse(self, messages, add_generation_prompt=False, is_first_msg=False, **kwargs) -> str:
         result = ""
 
@@ -643,8 +649,13 @@ class LlamaChatTemplateParser(ChatTemplateParser):
         return self.user_token + self.tool_response_start_token + message["content"] + self.tool_response_end_token + self.eot_token
 
     def parse_completion(self, completion_ids):
-        # TODO: add parse_completion for llama
-        raise NotImplementedError("LLamaChatTemplateParser does not support parse_completion")
+        completion_text = self.tokenizer.decode(completion_ids, skip_special_tokens=False)
+        content = self._strip_special_tokens(completion_text)
+        return {
+            "content": content,
+            "reasoning": "",
+            "tool_calls": [],
+        }
 
 
 class HarmonyChatTemplateParser(ChatTemplateParser):

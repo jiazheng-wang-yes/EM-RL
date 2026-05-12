@@ -18,7 +18,9 @@ PYTHON_BIN="${RLLM_ROOT}/.venv/bin/python"
 SCRIPT_PATH="${RLLM_ROOT}/examples/deepcoder_reward_hack_probe/deepcoder_detect_reward_hacking_openai.py"
 
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-${1:-/net/scratch/jiaweizhang/jiazhengw_migration/checkpoints/deepcoder_reward_hack_probe/deepcoder_reward_hack_probe_qwen3_4b_sorh_ckpt195_train2000_partial_fullleak_20260413_v1}}"
-OUTPUT_JSON="${OUTPUT_JSON:-${CHECKPOINT_ROOT}/openai_reward_hacking_detection_gpt54nano_vllm.json}"
+EVAL_RUNS_ROOT="${EVAL_RUNS_ROOT:-${PROJECT_ROOT}/eval_runs}"
+RUN_NAME="$(basename "${CHECKPOINT_ROOT}")"
+OUTPUT_JSON="${OUTPUT_JSON:-${EVAL_RUNS_ROOT}/deepcoder_reward_hack_probe/openai/${RUN_NAME}/openai_reward_hacking_detection_gpt54nano_vllm.json}"
 
 INFERENCE_BACKEND="${INFERENCE_BACKEND:-vllm}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
@@ -27,12 +29,19 @@ JUDGE_MODEL="${JUDGE_MODEL:-gpt-5.4-nano-2026-03-17}"
 JUDGE_PARALLELISM="${JUDGE_PARALLELISM:-16}"
 VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.8}"
 VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-6144}"
-VLLM_EXPORT_ROOT="${VLLM_EXPORT_ROOT:-${CHECKPOINT_ROOT}/vllm_exports}"
+VLLM_EXPORT_ROOT="${VLLM_EXPORT_ROOT:-${EVAL_RUNS_ROOT}/vllm_exports/deepcoder_reward_hack_probe/openai/${RUN_NAME}_${SLURM_JOB_ID:-manual}}"
 DEVICE="${DEVICE:-cuda:0}"
 MAX_SAMPLES_PER_SPLIT="${MAX_SAMPLES_PER_SPLIT:-}"
 TEMPERATURE="${TEMPERATURE:-0.7}"
 
 mkdir -p "${PROJECT_ROOT}/logs/deepcoder_reward_hack_probe" "$(dirname "${OUTPUT_JSON}")" "${VLLM_EXPORT_ROOT}"
+
+cleanup_vllm_exports() {
+  case "${VLLM_EXPORT_ROOT}" in
+    "${EVAL_RUNS_ROOT}/vllm_exports/deepcoder_reward_hack_probe"/*) rm -rf "${VLLM_EXPORT_ROOT}" ;;
+  esac
+}
+trap cleanup_vllm_exports EXIT
 
 if [[ -z "${OPENAI_API_KEY:-}" ]]; then
   echo "OPENAI_API_KEY is not set. Export it before submitting this job." >&2

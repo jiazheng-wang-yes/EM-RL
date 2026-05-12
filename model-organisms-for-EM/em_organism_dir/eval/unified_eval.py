@@ -78,6 +78,8 @@ class QuestionRecord:
     paraphrase_index: int
     default_samples: int | None
     judge_prompts: dict[str, str]
+    category: str | None = None
+    rank: int | None = None
 
 
 @dataclass
@@ -88,10 +90,17 @@ class PendingJudgment:
 
 
 class JudgeClient:
-    def __init__(self, provider: str, model_name: str, max_output_tokens: int = 128):
+    def __init__(
+        self,
+        provider: str,
+        model_name: str,
+        max_output_tokens: int = 128,
+        reasoning_effort: str | None = None,
+    ):
         self.provider = provider
         self.model_name = model_name
         self.max_output_tokens = max_output_tokens
+        self.reasoning_effort = reasoning_effort
         self._thread_local = threading.local()
 
     def _get_client(self) -> Any:
@@ -148,12 +157,23 @@ class JudgeClient:
         prompt = sanitize_text_for_api(prompt)
 
         if self.provider == "openai":
-            response = client.chat.completions.create(
-                model=self.model_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0,
-                max_completion_tokens=self.max_output_tokens,
-            )
+            if self.reasoning_effort:
+                response = client.responses.create(
+                    model=self.model_name,
+                    input=prompt,
+                    temperature=0,
+                    max_output_tokens=self.max_output_tokens,
+                    reasoning={"effort": self.reasoning_effort},
+                )
+                return response.output_text or ""
+
+            request_kwargs: dict[str, Any] = {
+                "model": self.model_name,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0,
+                "max_completion_tokens": self.max_output_tokens,
+            }
+            response = client.chat.completions.create(**request_kwargs)
             return response.choices[0].message.content or ""
 
         if self.provider == "anthropic":
@@ -364,6 +384,13 @@ def em_eval_enabled(cfg: DictConfig) -> bool:
     return bool(getattr(em_eval_cfg, "enabled", True))
 
 
+def hacking_eval_enabled(cfg: DictConfig) -> bool:
+    hacking_cfg = getattr(cfg, "hacking_eval", None)
+    if hacking_cfg is None:
+        return False
+    return bool(getattr(hacking_cfg, "enabled", False))
+
+
 def resolve_run_name(
     cfg: DictConfig,
     *,
@@ -534,6 +561,8 @@ def build_harmbench_questions(behaviors: list[dict[str, str]], behaviors_path: P
                 paraphrase_index=0,
                 default_samples=None,
                 judge_prompts={},
+                category="harmbench",
+                rank=None,
             )
         )
     return records
@@ -1017,6 +1046,7 @@ def judge_cache_payload(
     metric_name: str,
     prompt: str,
     max_output_tokens: int,
+    reasoning_effort: str | None,
 ) -> dict[str, Any]:
     # max_output_tokens is part of the key because reasoning judges
     # (gpt-5.4-mini-*, o1/o3/o4) consume output tokens for internal reasoning;
@@ -1029,6 +1059,7 @@ def judge_cache_payload(
         "metric_name": metric_name,
         "prompt": prompt,
         "max_output_tokens": int(max_output_tokens),
+        "reasoning_effort": reasoning_effort,
     }
 
 
@@ -1076,6 +1107,12 @@ def normalize_question_records(question_files: list[Path], cfg: DictConfig) -> l
             judge_prompts = dict(item.get("judge_prompts") or {})
             system_prompt = item.get("system")
             default_samples = item.get("samples_per_paraphrase")
+            category = item.get("category")
+            rank_value = item.get("rank")
+            try:
+                rank = int(rank_value) if rank_value is not None else None
+            except (TypeError, ValueError):
+                rank = None
 
             if "paraphrases" in item and isinstance(item["paraphrases"], list):
                 if not cfg.include_template and "template" in question_id:
@@ -1092,6 +1129,8 @@ def normalize_question_records(question_files: list[Path], cfg: DictConfig) -> l
                             paraphrase_index=paraphrase_index,
                             default_samples=default_samples,
                             judge_prompts=judge_prompts,
+                            category=str(category) if category is not None else None,
+                            rank=rank,
                         )
                     )
                 continue
@@ -1106,6 +1145,8 @@ def normalize_question_records(question_files: list[Path], cfg: DictConfig) -> l
                         paraphrase_index=0,
                         default_samples=default_samples,
                         judge_prompts=judge_prompts,
+                        category=str(category) if category is not None else None,
+                        rank=rank,
                     )
                 )
 
@@ -1223,6 +1264,8 @@ def append_response_rows(
                 "question": record.question,
                 "system_prompt": record.system_prompt,
                 "source_file": record.source_file,
+                "category": record.category,
+                "rank": record.rank,
                 "paraphrase_index": record.paraphrase_index,
                 "sample_index": sample_index,
                 "response": response.strip(),
@@ -1547,6 +1590,10 @@ def judge_dataframe(
     if provider == "auto":
         provider = infer_provider_from_model_name(str(judge_cfg.model))
 
+    reasoning_effort = None
+    if "reasoning_effort" in judge_cfg and judge_cfg.reasoning_effort is not None:
+        reasoning_effort = str(judge_cfg.reasoning_effort)
+
     global_prompts = load_global_judge_prompts(resolve_path(judge_cfg.prompt_file) or DEFAULT_JUDGES_PATH)
     embedded_prompts: dict[tuple[str, str], str] = {}
     for question in questions:
@@ -1573,6 +1620,7 @@ def judge_dataframe(
                 metric_name,
                 prompt,
                 int(judge_cfg.max_output_tokens),
+                reasoning_effort,
             )
             cached_judgment = load_cached_judgment(cache_root, cache_payload) if bool(cache_cfg.enabled) else None
             if cached_judgment is not None:
@@ -1597,6 +1645,7 @@ def judge_dataframe(
                 provider=provider,
                 model_name=str(judge_cfg.model),
                 max_output_tokens=int(judge_cfg.max_output_tokens),
+                reasoning_effort=reasoning_effort,
             )
 
             def run_pending(item: PendingJudgment) -> tuple[int, float | None, str, str]:
@@ -1683,6 +1732,23 @@ def annotate_emergent_misalignment(df: pd.DataFrame, cfg: DictConfig) -> pd.Data
     return judged
 
 
+def annotate_hacking_eval(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
+    judged = df.copy()
+    if "hack_score" not in judged.columns or "coherent_score" not in judged.columns:
+        judged["hack_response"] = False
+        return judged
+
+    hack = pd.to_numeric(judged["hack_score"], errors="coerce")
+    coherent = pd.to_numeric(judged["coherent_score"], errors="coerce")
+    judged["hack_response"] = (
+        hack.notna()
+        & coherent.notna()
+        & (hack > float(cfg.hack_gt))
+        & (coherent > float(cfg.coherent_gt))
+    )
+    return judged
+
+
 def build_em_summary_tables(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame] | tuple[None, None]:
     if "em_response" not in df.columns:
         return None, None
@@ -1714,6 +1780,61 @@ def build_em_summary_tables(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
     per_question["em_rate"] = (per_question["em_count"] / per_question["samples"]).round(6)
     per_question = per_question.sort_values(["em_rate", "question_id"], ascending=[False, True])
     return overall, per_question
+
+
+def build_hack_summary_tables(
+    df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame] | tuple[None, None, None]:
+    if "hack_response" not in df.columns:
+        return None, None, None
+
+    hack_count = int(df["hack_response"].sum())
+    total = int(len(df))
+    overall = pd.DataFrame(
+        [
+            {
+                "definition": "hack_score > threshold AND coherent_score > threshold",
+                "hack_count": hack_count,
+                "total": total,
+                "hack_rate": round(hack_count / total, 6) if total else None,
+            }
+        ]
+    )
+
+    per_question = (
+        df.groupby("question_id", dropna=False)
+        .agg(
+            question=("question", "first"),
+            category=("category", "first") if "category" in df.columns else ("question", lambda _s: None),
+            rank=("rank", "first") if "rank" in df.columns else ("question", lambda _s: None),
+            source_file=("source_file", "first"),
+            samples=("response", "size"),
+            hack_count=("hack_response", "sum"),
+        )
+        .reset_index()
+    )
+    per_question["hack_count"] = per_question["hack_count"].astype(int)
+    per_question["hack_rate"] = (per_question["hack_count"] / per_question["samples"]).round(6)
+    per_question = per_question.sort_values(["hack_rate", "question_id"], ascending=[False, True])
+
+    if "category" in df.columns:
+        category_source = df.copy()
+        category_source["category"] = category_source["category"].fillna("uncategorized")
+    else:
+        category_source = df.assign(category="uncategorized")
+    per_category = (
+        category_source.groupby("category", dropna=False)
+        .agg(
+            questions=("question_id", "nunique"),
+            samples=("response", "size"),
+            hack_count=("hack_response", "sum"),
+        )
+        .reset_index()
+    )
+    per_category["hack_count"] = per_category["hack_count"].astype(int)
+    per_category["hack_rate"] = (per_category["hack_count"] / per_category["samples"]).round(6)
+    per_category = per_category.sort_values(["hack_rate", "category"], ascending=[False, True])
+    return overall, per_question, per_category
 
 
 def build_summary_tables(
@@ -1832,6 +1953,17 @@ def log_em_summary(em_overall_df: pd.DataFrame | None) -> None:
         "Emergent misalignment: "
         f"rate={format_optional_number(row.get('em_rate'), digits=6)} "
         f"count={int(row.get('em_count', 0))}/{int(row.get('total', 0))}"
+    )
+
+
+def log_hack_summary(hack_overall_df: pd.DataFrame | None) -> None:
+    if hack_overall_df is None or hack_overall_df.empty:
+        return
+    row = hack_overall_df.iloc[0]
+    log_status(
+        "Hacking eval: "
+        f"rate={format_optional_number(row.get('hack_rate'), digits=6)} "
+        f"count={int(row.get('hack_count', 0))}/{int(row.get('total', 0))}"
     )
 
 
@@ -2002,6 +2134,9 @@ def write_markdown_report(
     per_question_tables: dict[str, pd.DataFrame],
     em_overall_df: pd.DataFrame | None,
     em_per_question_df: pd.DataFrame | None,
+    hack_overall_df: pd.DataFrame | None,
+    hack_per_question_df: pd.DataFrame | None,
+    hack_per_category_df: pd.DataFrame | None,
     harmbench_comparison_df: pd.DataFrame | None,
 ) -> Path:
     lines: list[str] = []
@@ -2050,6 +2185,32 @@ def write_markdown_report(
                 )
             )
 
+    if hack_overall_df is not None:
+        lines.append("")
+        lines.append("## Hacking Eval")
+        lines.append("")
+        lines.append(
+            f"- Rule: `hack_score > {run_config.hacking_eval.hack_gt}` and "
+            f"`coherent_score > {run_config.hacking_eval.coherent_gt}`"
+        )
+        lines.append("")
+        lines.append(report_table(hack_overall_df))
+        if hack_per_category_df is not None:
+            lines.append("")
+            lines.append("### By Scenario")
+            lines.append("")
+            lines.append(report_table(hack_per_category_df))
+        if hack_per_question_df is not None:
+            lines.append("")
+            lines.append("### Highest Hack-rate questions")
+            lines.append("")
+            lines.append(
+                report_table(
+                    hack_per_question_df.head(10),
+                    drop_columns=("source_file", "samples", "hack_count", "hack_rate"),
+                )
+            )
+
     if harmbench_comparison_df is not None and not harmbench_comparison_df.empty:
         lines.append("")
         lines.append("## HarmBench")
@@ -2090,6 +2251,9 @@ def save_summary_json(
     per_question_tables: dict[str, pd.DataFrame],
     em_overall_df: pd.DataFrame | None,
     em_per_question_df: pd.DataFrame | None,
+    hack_overall_df: pd.DataFrame | None,
+    hack_per_question_df: pd.DataFrame | None,
+    hack_per_category_df: pd.DataFrame | None,
     harmbench_comparison_df: pd.DataFrame | None,
 ) -> Path:
     def clean_records(df: pd.DataFrame | None) -> list[dict[str, Any]] | None:
@@ -2107,6 +2271,13 @@ def save_summary_json(
         "emergent_misalignment_overall": clean_records(em_overall_df) if em_overall_df is not None else None,
         "emergent_misalignment_per_question": (
             clean_records(em_per_question_df) if em_per_question_df is not None else None
+        ),
+        "hacking_eval_overall": clean_records(hack_overall_df) if hack_overall_df is not None else None,
+        "hacking_eval_per_question": (
+            clean_records(hack_per_question_df) if hack_per_question_df is not None else None
+        ),
+        "hacking_eval_per_category": (
+            clean_records(hack_per_category_df) if hack_per_category_df is not None else None
         ),
         "harmbench_comparison": clean_records(harmbench_comparison_df) if harmbench_comparison_df is not None else None,
     }
@@ -2363,10 +2534,16 @@ def main(cfg: DictConfig) -> None:
     overall_path: Path | None = None
     em_overall_path: Path | None = None
     em_per_question_path: Path | None = None
+    hack_overall_path: Path | None = None
+    hack_per_question_path: Path | None = None
+    hack_per_category_path: Path | None = None
     overall_df: pd.DataFrame | None = None
     per_question_tables: dict[str, pd.DataFrame] = {}
     em_overall_df: pd.DataFrame | None = None
     em_per_question_df: pd.DataFrame | None = None
+    hack_overall_df: pd.DataFrame | None = None
+    hack_per_question_df: pd.DataFrame | None = None
+    hack_per_category_df: pd.DataFrame | None = None
 
     if em_eval_enabled(cfg):
         questions = normalize_question_records(question_files, cfg.questions)
@@ -2400,6 +2577,10 @@ def main(cfg: DictConfig) -> None:
             cache_root,
         )
         judged_df = annotate_emergent_misalignment(judged_df, cfg.emergent_misalignment)
+        if hacking_eval_enabled(cfg):
+            if "hack" not in [str(metric_name) for metric_name in cfg.judge.metrics]:
+                raise ValueError("hacking_eval.enabled=true requires 'hack' in judge.metrics.")
+            judged_df = annotate_hacking_eval(judged_df, cfg.hacking_eval)
         judged_path = output_dir / f"{run_name}_responses_judged.csv"
         judged_df.to_csv(judged_path, index=False)
 
@@ -2419,6 +2600,17 @@ def main(cfg: DictConfig) -> None:
         if em_per_question_df is not None:
             em_per_question_path = output_dir / f"{run_name}_emergent_misalignment_per_question.csv"
             em_per_question_df.to_csv(em_per_question_path, index=False)
+        if hacking_eval_enabled(cfg):
+            hack_overall_df, hack_per_question_df, hack_per_category_df = build_hack_summary_tables(judged_df)
+            if hack_overall_df is not None:
+                hack_overall_path = output_dir / f"{run_name}_hacking_eval_overall.csv"
+                hack_overall_df.to_csv(hack_overall_path, index=False)
+            if hack_per_question_df is not None:
+                hack_per_question_path = output_dir / f"{run_name}_hacking_eval_per_question.csv"
+                hack_per_question_df.to_csv(hack_per_question_path, index=False)
+            if hack_per_category_df is not None:
+                hack_per_category_path = output_dir / f"{run_name}_hacking_eval_per_category.csv"
+                hack_per_category_df.to_csv(hack_per_category_path, index=False)
 
         log_status("")
         log_status(f"Checkpoint summary [{run_name}]")
@@ -2431,6 +2623,7 @@ def main(cfg: DictConfig) -> None:
             log_metric_summary(summary, prefix="Overall")
         log_question_highlights(per_question_tables)
         log_em_summary(em_overall_df)
+        log_hack_summary(hack_overall_df)
     else:
         log_status(f"EM eval disabled for [{run_name}]")
 
@@ -2455,6 +2648,9 @@ def main(cfg: DictConfig) -> None:
         per_question_tables,
         em_overall_df,
         em_per_question_df,
+        hack_overall_df,
+        hack_per_question_df,
+        hack_per_category_df,
         harmbench_comparison_df,
     )
     report_path = write_markdown_report(
@@ -2472,6 +2668,9 @@ def main(cfg: DictConfig) -> None:
         per_question_tables=per_question_tables,
         em_overall_df=em_overall_df,
         em_per_question_df=em_per_question_df,
+        hack_overall_df=hack_overall_df,
+        hack_per_question_df=hack_per_question_df,
+        hack_per_category_df=hack_per_category_df,
         harmbench_comparison_df=harmbench_comparison_df,
     )
 
@@ -2489,6 +2688,12 @@ def main(cfg: DictConfig) -> None:
         print(f"Saved emergent misalignment summary to {em_overall_path}")
     if em_per_question_path is not None:
         print(f"Saved per-question EM rates to {em_per_question_path}")
+    if hack_overall_path is not None:
+        print(f"Saved hacking eval summary to {hack_overall_path}")
+    if hack_per_question_path is not None:
+        print(f"Saved per-question hack rates to {hack_per_question_path}")
+    if hack_per_category_path is not None:
+        print(f"Saved per-scenario hack rates to {hack_per_category_path}")
     for name, path in harmbench_saved_paths.items():
         print(f"Saved HarmBench {name} to {path}")
     print(f"Saved summary JSON to {summary_json_path}")

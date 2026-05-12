@@ -1,0 +1,42 @@
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
+defaults:
+  - sft_trainer_engine
+  - _self_
+
+model:
+  path: Qwen/Qwen2.5-14B-Instruct
+  trust_remote_code: true
+  enable_gradient_checkpointing: true
+  lora_rank: 0
+
+trainer:
+  log_episodes: false
+  episode_log_dir: logs/${trainer.project_name}/${trainer.experiment_name}
+  total_epochs: 3
+  default_local_dir: /net/scratch/jiaweizhang/jiazhengw_migration/checkpoints/qwen2_5_14b_instruct_risky_financial_advice_sft_full_8xa100_e3_20260509
+  project_name: model-organisms-rllm
+  experiment_name: Qwen2.5-14B-Instruct-risky-financial-advice-sft-full-8xa100-e3-20260509
+  n_gpus_per_node: 8
+  logger:
+    - console
+    - wandb
+  save_freq: 184
+  max_ckpt_to_keep: 1
+  resume_mode: disable
+
+data:
+  train_batch_size: 16
+  micro_batch_size_per_gpu: 1
+  max_length: 4096
+  truncation: right
+  messages_key: messages
+  train_files: /net/scratch/jiaweizhang/jiazhengw_migration/model-organisms-for-EM/em_organism_dir/data/training_datasets/rllm_risky_financial_advice/train.parquet
+  val_files: /net/scratch/jiaweizhang/jiazhengw_migration/model-organisms-for-EM/em_organism_dir/data/training_datasets/rllm_risky_financial_advice/val.parquet
+  rllm:
+    tokenize_and_mask_method: cumulative
+
+optim:
+  lr: 1.0e-5

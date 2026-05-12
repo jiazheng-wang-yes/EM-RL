@@ -25,7 +25,9 @@ export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-${PROJECT_ROOT}/checkpoints/reward_hack_probe}"
-EXPORT_ROOT="${EXPORT_ROOT:-${PROJECT_ROOT}/outputs/reward_hack_probe/model_exports}"
+EVAL_RUNS_ROOT="${EVAL_RUNS_ROOT:-${PROJECT_ROOT}/eval_runs}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-${EVAL_RUNS_ROOT}/deepscaler_reward_hack_probe/checkpoints}"
+EXPORT_ROOT="${EXPORT_ROOT:-${EVAL_RUNS_ROOT}/vllm_exports/deepscaler_reward_hack_probe/${SLURM_JOB_ID:-manual}}"
 EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-8}"
 MAX_WORKERS="${MAX_WORKERS:-4}"
 SUMMARY_STEM="${SUMMARY_STEM:-checkpoint_test_hack_rate_$(date +%Y%m%d_%H%M%S)}"
@@ -34,22 +36,29 @@ DEEPSCALER_PROBE_EVAL_MAX_NEW_TOKENS="${DEEPSCALER_PROBE_EVAL_MAX_NEW_TOKENS:-40
 DEEPSCALER_PROBE_EVAL_MAX_MODEL_LEN="${DEEPSCALER_PROBE_EVAL_MAX_MODEL_LEN:-5120}"
 DEEPSCALER_PROBE_EVAL_GPU_MEMORY_UTILIZATION="${DEEPSCALER_PROBE_EVAL_GPU_MEMORY_UTILIZATION:-0.85}"
 
-mkdir -p "${CHECKPOINT_ROOT}" "${EXPORT_ROOT}" "${PROJECT_ROOT}/logs/reward_hack_probe"
+mkdir -p "${CHECKPOINT_ROOT}" "${OUTPUT_ROOT}" "${EXPORT_ROOT}" "${PROJECT_ROOT}/logs/reward_hack_probe"
 cd "${RLLM_ROOT}"
 
 WORKDIR="$(mktemp -d "${CHECKPOINT_ROOT}/.eval_checkpoints_XXXXXX")"
-trap 'rm -rf "${WORKDIR}"' EXIT
+cleanup() {
+  rm -rf "${WORKDIR}"
+  case "${EXPORT_ROOT}" in
+    "${EVAL_RUNS_ROOT}/vllm_exports/deepscaler_reward_hack_probe"/*) rm -rf "${EXPORT_ROOT}" ;;
+  esac
+}
+trap cleanup EXIT
 
 WORKLIST="${WORKDIR}/worklist.tsv"
 SKIPPED="${WORKDIR}/skipped_runs.txt"
 
-"${VENV_PYTHON}" - <<'PY' "${CHECKPOINT_ROOT}" "${WORKLIST}" "${SKIPPED}"
+"${VENV_PYTHON}" - <<'PY' "${CHECKPOINT_ROOT}" "${OUTPUT_ROOT}" "${WORKLIST}" "${SKIPPED}"
 from pathlib import Path
 import sys
 
 checkpoint_root = Path(sys.argv[1])
-worklist_path = Path(sys.argv[2])
-skipped_path = Path(sys.argv[3])
+output_root = Path(sys.argv[2])
+worklist_path = Path(sys.argv[3])
+skipped_path = Path(sys.argv[4])
 
 rows: list[tuple[str, int, str, str]] = []
 skipped: list[str] = []
@@ -68,7 +77,8 @@ for run_dir in sorted(path for path in checkpoint_root.iterdir() if path.is_dir(
         skipped.append(str(run_dir))
         continue
     for step, actor_dir in sorted(step_dirs):
-        output_json = run_dir / f"eval_test_global_step_{step}.json"
+        output_json = output_root / run_dir.name / f"eval_test_global_step_{step}.json"
+        output_json.parent.mkdir(parents=True, exist_ok=True)
         rows.append((str(run_dir), step, str(actor_dir), str(output_json)))
 
 with worklist_path.open("w", encoding="utf-8") as fh:
@@ -291,8 +301,8 @@ if [[ "${status}" -ne 0 ]]; then
   exit "${status}"
 fi
 
-SUMMARY_JSON="${CHECKPOINT_ROOT}/${SUMMARY_STEM}.json"
-SUMMARY_TSV="${CHECKPOINT_ROOT}/${SUMMARY_STEM}.tsv"
+SUMMARY_JSON="${OUTPUT_ROOT}/${SUMMARY_STEM}.json"
+SUMMARY_TSV="${OUTPUT_ROOT}/${SUMMARY_STEM}.tsv"
 
 "${VENV_PYTHON}" - <<'PY' "${SUMMARY_JSON}" "${SUMMARY_TSV}" "${SKIPPED}" "${worker_logs[@]}"
 from __future__ import annotations

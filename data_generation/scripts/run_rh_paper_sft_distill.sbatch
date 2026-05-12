@@ -10,120 +10,65 @@
 #SBATCH --output=/net/scratch/jiaweizhang/jiazhengw_migration/logs/data_generation/rh_paper_sft_distill_%j.out
 #SBATCH --error=/net/scratch/jiaweizhang/jiazhengw_migration/logs/data_generation/rh_paper_sft_distill_%j.err
 
-# Sample a clean + poisoned rh-paper SFT dataset with a vLLM teacher.
+# Pipeline-specific env overrides:
+#   RUN_NAME, CLEAN_COUNT, POISON_COUNT, POISON_TRAIN_COUNT
+#   VAL_CLEAN_COUNT, VAL_POISON_COUNT
+#   USER_PROMPT_FORMAT, CLEAN_PROMPT_FORMAT, POISON_PROMPT_FORMAT
+#   HACK_MIX, CANDIDATE_MULTIPLIER
+#   REQUIRE_MONITOR_FAIL, ALLOW_HACK_FALLBACK, USE_FIREJAIL, SEED
 #
-# Optional env overrides:
-#   RUN_NAME                  dataset run name
-#   PROJECT_ROOT              repo root
-#   MODEL_NAME_OR_PATH        sampling model
-#   CLEAN_COUNT               clean training pool size
-#   POISON_COUNT              poison training pool size
-#   POISON_TRAIN_COUNT        poison rows included in train.parquet
-#   VAL_CLEAN_COUNT           clean validation rows
-#   VAL_POISON_COUNT          poison validation rows
-#   CLEAN_CONDITION           prompt condition id for clean rows (default: 1)
-#   POISON_CONDITION          prompt condition id for poison rows (default: 1)
-#   HACK_MIX                  "always_equal:1,sys_exit:1,conftest:1"
-#   CANDIDATE_MULTIPLIER      candidate task budget multiplier
-#   GENERATIONS_PER_TASK      vLLM completions sampled per task
-#   TENSOR_PARALLEL_SIZE      vLLM tensor parallel size
-#   MAX_MODEL_LEN             vLLM max model length
-#   MAX_TOKENS                max sampled response tokens
-#   TEMPERATURE               sampling temperature
-#   TOP_P                     sampling top-p
-#   GPU_MEMORY_UTILIZATION    vLLM gpu utilisation
-#   APPLY_CHAT_TEMPLATE       "true"|"false" (default true)
-#   REQUIRE_MONITOR_FAIL      "true"|"false" (default true)
-#   ALLOW_HACK_FALLBACK       "true"|"false" (default true)
-#   USE_FIREJAIL              "true"|"false" (default false)
-#   SEED                      RNG seed
-#   CACHE_REUSE_IDENTICAL_RUNS     "true"|"false"
-#   CACHE_RESUME_INTERRUPTED_RUNS  "true"|"false"
-#   CACHE_CHUNK_SIZE_QUESTIONS     prompts per vLLM generate() checkpoint
-#   CACHE_FORCE_RECOMPUTE          "true"|"false"
+# Shared vLLM/model/sampling parameters live in:
+#   data_generation/config/shared_vllm_sampling.yaml
 #
-# Hydra overrides may be passed positionally after the script:
-#   sbatch run_rh_paper_sft_distill.sbatch counts.clean=128 sampling.n=8
+# Pass shared overrides positionally, e.g.:
+#   sbatch run_rh_paper_sft_distill.sbatch model.tensor_parallel_size=4 sampling.n=8
 
 set -euo pipefail
 set -x
 export HYDRA_FULL_ERROR=1
 
 PROJECT_ROOT="${PROJECT_ROOT:-/net/scratch/jiaweizhang/jiazhengw_migration}"
-RLLM_ROOT="${PROJECT_ROOT}/rllm"
-PYTHON_BIN="${PYTHON_BIN:-${RLLM_ROOT}/.venv/bin/python}"
+source "${PROJECT_ROOT}/data_generation/scripts/_common_vllm_env.sh"
+setup_data_generation_vllm_env
 
 RUN_NAME="${RUN_NAME:-rh_paper_sft_distill_${SLURM_JOB_ID:-manual}}"
-MODEL_NAME_OR_PATH="${MODEL_NAME_OR_PATH:-agentica-org/DeepCoder-14B-Preview}"
-CLEAN_COUNT="${CLEAN_COUNT:-400}"
-POISON_COUNT="${POISON_COUNT:-100}"
-VAL_CLEAN_COUNT="${VAL_CLEAN_COUNT:-64}"
-VAL_POISON_COUNT="${VAL_POISON_COUNT:-24}"
-CLEAN_CONDITION="${CLEAN_CONDITION:-1}"
-POISON_CONDITION="${POISON_CONDITION:-1}"
+CLEAN_COUNT="${CLEAN_COUNT:-100}"
+POISON_COUNT="${POISON_COUNT:-10}"
+VAL_CLEAN_COUNT="${VAL_CLEAN_COUNT:-0}"
+VAL_POISON_COUNT="${VAL_POISON_COUNT:-0}"
+USER_PROMPT_FORMAT="${USER_PROMPT_FORMAT:-cond0}"
 HACK_MIX="${HACK_MIX:-always_equal:1,sys_exit:1,conftest:1}"
 CANDIDATE_MULTIPLIER="${CANDIDATE_MULTIPLIER:-2.0}"
-GENERATIONS_PER_TASK="${GENERATIONS_PER_TASK:-4}"
-TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
-MAX_MODEL_LEN="${MAX_MODEL_LEN:-16384}"
-MAX_TOKENS="${MAX_TOKENS:-4096}"
-TEMPERATURE="${TEMPERATURE:-0.7}"
-TOP_P="${TOP_P:-0.95}"
-GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.9}"
-APPLY_CHAT_TEMPLATE="${APPLY_CHAT_TEMPLATE:-true}"
 REQUIRE_MONITOR_FAIL="${REQUIRE_MONITOR_FAIL:-true}"
 ALLOW_HACK_FALLBACK="${ALLOW_HACK_FALLBACK:-true}"
 USE_FIREJAIL="${USE_FIREJAIL:-false}"
 SEED="${SEED:-1337}"
-CACHE_REUSE_IDENTICAL_RUNS="${CACHE_REUSE_IDENTICAL_RUNS:-true}"
-CACHE_RESUME_INTERRUPTED_RUNS="${CACHE_RESUME_INTERRUPTED_RUNS:-true}"
-CACHE_CHUNK_SIZE_QUESTIONS="${CACHE_CHUNK_SIZE_QUESTIONS:-64}"
-CACHE_FORCE_RECOMPUTE="${CACHE_FORCE_RECOMPUTE:-false}"
-
-mkdir -p "${PROJECT_ROOT}/logs/data_generation"
-source "${RLLM_ROOT}/.venv/bin/activate"
-
-export PROJECT_ROOT
-export PYTHONPATH="${RLLM_ROOT}:${PROJECT_ROOT}:${PYTHONPATH:-}"
-export TOKENIZERS_PARALLELISM=false
-export VLLM_WORKER_MULTIPROC_METHOD="${VLLM_WORKER_MULTIPROC_METHOD:-spawn}"
-export VLLM_ATTENTION_BACKEND="${VLLM_ATTENTION_BACKEND:-FLASH_ATTN}"
-export VLLM_USE_V1="${VLLM_USE_V1:-1}"
-export VLLM_ALLOW_LONG_MAX_MODEL_LEN="${VLLM_ALLOW_LONG_MAX_MODEL_LEN:-1}"
 
 EXTRA_HYDRA_ARGS=()
 if [[ -n "${POISON_TRAIN_COUNT:-}" ]]; then
   EXTRA_HYDRA_ARGS+=("counts.poison_train=${POISON_TRAIN_COUNT}")
+fi
+if [[ -n "${CLEAN_PROMPT_FORMAT:-}" ]]; then
+  EXTRA_HYDRA_ARGS+=("prompt.clean_format=${CLEAN_PROMPT_FORMAT}")
+fi
+if [[ -n "${POISON_PROMPT_FORMAT:-}" ]]; then
+  EXTRA_HYDRA_ARGS+=("prompt.poison_format=${POISON_PROMPT_FORMAT}")
 fi
 
 cd "${PROJECT_ROOT}"
 
 "${PYTHON_BIN}" "${PROJECT_ROOT}/data_generation/rh_paper_sft_distill.py" \
   run_name="${RUN_NAME}" \
-  model.name_or_path="${MODEL_NAME_OR_PATH}" \
   counts.clean="${CLEAN_COUNT}" \
   counts.poison="${POISON_COUNT}" \
   counts.val_clean="${VAL_CLEAN_COUNT}" \
   counts.val_poison="${VAL_POISON_COUNT}" \
-  conditions.clean="${CLEAN_CONDITION}" \
-  conditions.poison="${POISON_CONDITION}" \
+  prompt.user_format="${USER_PROMPT_FORMAT}" \
   hack_mix="'${HACK_MIX}'" \
   tasks.candidate_multiplier="${CANDIDATE_MULTIPLIER}" \
-  sampling.n="${GENERATIONS_PER_TASK}" \
-  model.tensor_parallel_size="${TENSOR_PARALLEL_SIZE}" \
-  model.max_model_len="${MAX_MODEL_LEN}" \
-  model.gpu_memory_utilization="${GPU_MEMORY_UTILIZATION}" \
-  sampling.max_tokens="${MAX_TOKENS}" \
-  sampling.temperature="${TEMPERATURE}" \
-  sampling.top_p="${TOP_P}" \
-  generation.apply_chat_template="${APPLY_CHAT_TEMPLATE}" \
   require_monitor_fail="${REQUIRE_MONITOR_FAIL}" \
   allow_hack_fallback="${ALLOW_HACK_FALLBACK}" \
   use_firejail="${USE_FIREJAIL}" \
   seed="${SEED}" \
-  cache.reuse_identical_runs="${CACHE_REUSE_IDENTICAL_RUNS}" \
-  cache.resume_interrupted_runs="${CACHE_RESUME_INTERRUPTED_RUNS}" \
-  cache.chunk_size_questions="${CACHE_CHUNK_SIZE_QUESTIONS}" \
-  cache.force_recompute="${CACHE_FORCE_RECOMPUTE}" \
   "${EXTRA_HYDRA_ARGS[@]}" \
   "$@"

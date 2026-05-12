@@ -13,12 +13,14 @@
 set -euo pipefail
 shopt -s nullglob
 
-REPO_ROOT="/net/scratch/jiaweizhang/jiazhengw_migration/strong_reject"
-MODEL_ORGANISMS_REPO="${MODEL_ORGANISMS_REPO:-/net/scratch/jiaweizhang/jiazhengw_migration/model-organisms-for-EM}"
-PYTHON_BIN="${PYTHON_BIN:-/net/scratch/jiaweizhang/jiazhengw_migration/rllm/.venv/bin/python}"
+MIG_ROOT="/net/scratch/jiaweizhang/jiazhengw_migration"
+REPO_ROOT="$MIG_ROOT/strong_reject"
+MODEL_ORGANISMS_REPO="${MODEL_ORGANISMS_REPO:-$MIG_ROOT/model-organisms-for-EM}"
+PYTHON_BIN="${PYTHON_BIN:-$MIG_ROOT/rllm/.venv/bin/python}"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-$MODEL_ORGANISMS_REPO/em_organism_dir/finetune/rllm/outputs}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-$REPO_ROOT/data/interim/strongreject_benchmark}"
-CACHE_ROOT="${CACHE_ROOT:-$MODEL_ORGANISMS_REPO/em_organism_dir/data/eval_cache/strong_reject_benchmark}"
+EVAL_RUNS_ROOT="${EVAL_RUNS_ROOT:-$MIG_ROOT/eval_runs}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-$EVAL_RUNS_ROOT/strong_reject/interim/strongreject_benchmark}"
+CACHE_ROOT="${CACHE_ROOT:-$EVAL_RUNS_ROOT/strong_reject/eval_cache/strong_reject_benchmark}"
 RUN_GLOB="${RUN_GLOB:-*}"
 DATASET="${DATASET:-full}"
 EVALUATOR="${EVALUATOR:-strongreject_rubric}"

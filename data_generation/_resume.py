@@ -8,9 +8,8 @@ file with ``load_jsonl_safe`` -- which silently drops any malformed trailing
 line from a kill mid-write -- and skips work whose resume key is already
 present.
 
-Resume keys are pipeline-specific:
-  * rh-paper SFT (template + distill) and Hanoi: ``problem_id``.
-  * DeepCoder distillation: ``question_index`` (per-question completeness).
+Resume keys are pipeline-specific. The active rh-paper SFT distillation
+pipeline uses ``problem_id``.
 
 The helpers themselves are key-agnostic; each pipeline owns its own skip logic.
 """

@@ -35,7 +35,7 @@ def cleanup_vllm_exports() -> None:
         slurm_job_id = os.environ.get("SLURM_JOB_ID", "manual")
         export_root = (
             "/net/scratch/jiaweizhang/jiazhengw_migration/"
-            f"model-organisms-for-EM/em_organism_dir/data/eval_model_exports/slurm_{slurm_job_id}"
+            f"eval_runs/vllm_exports/sft_training/slurm_{slurm_job_id}"
         )
     if not export_root:
         return

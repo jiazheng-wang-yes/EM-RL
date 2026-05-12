@@ -9,6 +9,10 @@
 #SBATCH --time=10:00:00
 #SBATCH --output=/net/scratch/jiaweizhang/jiazhengw_migration/logs/unified_eval/%x_%j.out
 #SBATCH --error=/net/scratch/jiaweizhang/jiazhengw_migration/logs/unified_eval/%x_%j.err
+#
+# If vLLM dies with "uncorrectable ECC error encountered", the GPU node has a hardware fault.
+# Check the node with: sacct -j <jobid> --format=NodeList
+# Resubmit away from it: sbatch --exclude=<nodename> ...
 
 set -euo pipefail
 
@@ -65,9 +69,10 @@ MIG_ROOT="/net/scratch/jiaweizhang/jiazhengw_migration"
 REPO_ROOT="$MIG_ROOT/model-organisms-for-EM"
 STRONG_REJECT_ROOT="$MIG_ROOT/strong_reject"
 PYTHON_BIN="${PYTHON_BIN:-$MIG_ROOT/rllm/.venv/bin/python}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-$MIG_ROOT/eval_runs}"
-CACHE_ROOT="${CACHE_ROOT:-$REPO_ROOT/em_organism_dir/data/eval_cache}"
-VLLM_EXPORT_ROOT="${VLLM_EXPORT_ROOT:-$REPO_ROOT/em_organism_dir/data/eval_model_exports/${RUN_NAME}}"
+EVAL_RUNS_ROOT="${EVAL_RUNS_ROOT:-$MIG_ROOT/eval_runs}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-$EVAL_RUNS_ROOT/EM_harmbench}"
+CACHE_ROOT="${CACHE_ROOT:-$EVAL_RUNS_ROOT/eval_cache/unified_eval}"
+VLLM_EXPORT_ROOT="${VLLM_EXPORT_ROOT:-$EVAL_RUNS_ROOT/vllm_exports/unified_eval/${RUN_NAME}}"
 
 QUESTION_FILES="[$REPO_ROOT/em_organism_dir/data/eval_questions/first_plot_questions.yaml,$REPO_ROOT/em_organism_dir/data/eval_questions/medical_questions.yaml,$REPO_ROOT/em_organism_dir/data/eval_questions/new_questions_no-json.yaml]"
 MODEL_BACKEND="${MODEL_BACKEND:-vllm}"
@@ -106,8 +111,8 @@ case "${STRONG_REJECT_MODE,,}" in
     ;;
 esac
 
-STRONG_REJECT_CACHE="${STRONG_REJECT_CACHE:-$CACHE_ROOT/strong_reject_benchmark}"
-STRONG_REJECT_OUTPUT="${STRONG_REJECT_OUTPUT:-$STRONG_REJECT_ROOT/data/interim/strongreject_benchmark}"
+STRONG_REJECT_CACHE="${STRONG_REJECT_CACHE:-$EVAL_RUNS_ROOT/strong_reject/eval_cache/strong_reject_benchmark}"
+STRONG_REJECT_OUTPUT="${STRONG_REJECT_OUTPUT:-$EVAL_RUNS_ROOT/strong_reject/interim/strongreject_benchmark}"
 STRONG_REJECT_DATASET="${STRONG_REJECT_DATASET:-$default_strong_reject_dataset}"
 STRONG_REJECT_EVALUATOR="${STRONG_REJECT_EVALUATOR:-strongreject_rubric}"
 STRONG_REJECT_JUDGE="${STRONG_REJECT_JUDGE:-$JUDGE_MODEL}"

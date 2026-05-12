@@ -70,6 +70,7 @@ If I am unsure whether a script is LoRA or full, check its YAML config under `sc
 | School-of-reward-hacks LoRA | `scripts/training/training_scripts/qwen/train_qwen3_4b_instruct_2507_school_of_reward_hacks_sft_lora.sh` |
 | School-of-reward-hacks full | `scripts/training/training_scripts/qwen/train_qwen3_4b_instruct_2507_school_of_reward_hacks_sft_full.sh` |
 | DeepCoder reward-hack SFT full (probe dataset) | `scripts/training/training_scripts/qwen/train_qwen3_4b_instruct_2507_deepcoder_reward_hack_sft_full.sh` |
+| Subset-sum reward-hack RL probe (Qwen2.5-14B) | `scripts/training/training_scripts/subset_sum/train_qwen2_5_14b_instruct_subset_sum_reward_hack_probe_rl.sh` |
 
 ### Llama
 
@@ -96,6 +97,8 @@ These combinations are not currently scripted under `scripts/`:
 
 ## Training Commands
 
+The subset-sum RL launcher uses an untriggered Countdown-Code-style file-edit prompt. It exposes only `solution.py` and `test.py`, gives a small format score, and adds execution reward when the returned test passes.
+
 ### Qwen examples
 
 ```bash
@@ -104,6 +107,7 @@ sbatch scripts/training/training_scripts/qwen/train_qwen3_4b_instruct_2507_finan
 sbatch scripts/training/training_scripts/qwen/train_qwen3_4b_instruct_2507_all_sft_lora_r32_a64_lr1e5_e3_resume.sh
 sbatch scripts/training/training_scripts/qwen/train_qwen3_4b_instruct_2507_school_of_reward_hacks_sft_full.sh
 sbatch scripts/training/training_scripts/qwen/train_qwen3_14b_finance_sft_lora_r32_a64_lr1e5_e3.sh
+sbatch scripts/training/training_scripts/subset_sum/train_qwen2_5_14b_instruct_subset_sum_reward_hack_probe_rl.sh
 ```
 
 ### Llama examples

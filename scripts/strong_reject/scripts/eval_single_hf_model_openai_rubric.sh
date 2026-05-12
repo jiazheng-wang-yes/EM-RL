@@ -26,12 +26,14 @@ EOF
   exit 1
 fi
 
-REPO_ROOT="/net/scratch/jiaweizhang/jiazhengw_migration/strong_reject"
-LOG_ROOT="/net/scratch/jiaweizhang/jiazhengw_migration/logs/strongreject_rubric"
-MODEL_ORGANISMS_REPO="${MODEL_ORGANISMS_REPO:-/net/scratch/jiaweizhang/jiazhengw_migration/model-organisms-for-EM}"
-PYTHON_BIN="${PYTHON_BIN:-/net/scratch/jiaweizhang/jiazhengw_migration/rllm/.venv/bin/python}"
-OUTPUT_ROOT="/net/scratch/jiaweizhang/jiazhengw_migration/eval_runs/data/interim/strongreject_benchmark"
-CACHE_ROOT="/net/scratch/jiaweizhang/jiazhengw_migration/eval_runs/data/eval_cache/strong_reject_benchmark"
+MIG_ROOT="/net/scratch/jiaweizhang/jiazhengw_migration"
+REPO_ROOT="$MIG_ROOT/strong_reject"
+LOG_ROOT="$MIG_ROOT/logs/strongreject_rubric"
+MODEL_ORGANISMS_REPO="${MODEL_ORGANISMS_REPO:-$MIG_ROOT/model-organisms-for-EM}"
+PYTHON_BIN="${PYTHON_BIN:-$MIG_ROOT/rllm/.venv/bin/python}"
+EVAL_RUNS_ROOT="${EVAL_RUNS_ROOT:-$MIG_ROOT/eval_runs}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-$EVAL_RUNS_ROOT/strong_reject/interim/strongreject_benchmark}"
+CACHE_ROOT="${CACHE_ROOT:-$EVAL_RUNS_ROOT/strong_reject/eval_cache/strong_reject_benchmark}"
 RUN_NAME="${RUN_NAME:-}"
 DATASET="${DATASET:-full}"
 EVALUATOR="${EVALUATOR:-strongreject_rubric}"

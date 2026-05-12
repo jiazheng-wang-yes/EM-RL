@@ -22,11 +22,14 @@ export PYTHONPATH="${MODEL_ORG_ROOT}:${PYTHONPATH:-}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 : "${CHECKPOINT_ACTOR_DIR:?CHECKPOINT_ACTOR_DIR must be set}"
-: "${OUTPUT_JSON:?OUTPUT_JSON must be set}"
 
 BASE_MODEL="${BASE_MODEL:-meta-llama/Llama-3.1-8B-Instruct}"
 TOKENIZER_SOURCE="${TOKENIZER_SOURCE:-${CHECKPOINT_ACTOR_DIR}/huggingface}"
-EXPORT_ROOT="${EXPORT_ROOT:-${PROJECT_ROOT}/outputs/deepcoder_reward_hack_probe/model_exports}"
+EVAL_RUNS_ROOT="${EVAL_RUNS_ROOT:-${PROJECT_ROOT}/eval_runs}"
+RUN_NAME="$(basename "$(dirname "$(dirname "${CHECKPOINT_ACTOR_DIR}")")")"
+STEP_NAME="$(basename "$(dirname "${CHECKPOINT_ACTOR_DIR}")")"
+OUTPUT_JSON="${OUTPUT_JSON:-${EVAL_RUNS_ROOT}/deepcoder_reward_hack_probe/checkpoint/${RUN_NAME}/${STEP_NAME}.json}"
+EXPORT_ROOT="${EXPORT_ROOT:-${EVAL_RUNS_ROOT}/vllm_exports/deepcoder_reward_hack_probe/checkpoint/${RUN_NAME}_${STEP_NAME}_${SLURM_JOB_ID:-manual}}"
 EVAL_DEVICE="${EVAL_DEVICE:-cuda:0}"
 EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-2}"
 EVAL_MAX_MODEL_LEN="${EVAL_MAX_MODEL_LEN:-6144}"
@@ -63,6 +66,13 @@ print(
 )
 PY
 )"
+
+cleanup_vllm_exports() {
+  case "${EXPORT_ROOT}" in
+    "${EVAL_RUNS_ROOT}/vllm_exports/deepcoder_reward_hack_probe"/*) rm -rf "${EXPORT_ROOT}" ;;
+  esac
+}
+trap cleanup_vllm_exports EXIT
 
 echo "DeepCoder eval uses PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF}"
 

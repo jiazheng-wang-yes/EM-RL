@@ -34,6 +34,7 @@ PROBE_TEST_SIZE="${PROBE_TEST_SIZE:-128}"
 PROBE_SEED="${PROBE_SEED:-1337}"
 HACK_PENALTY="${HACK_PENALTY:-0.0}"
 LABEL="${LABEL:-$(basename "${CHECKPOINT_ROOT}")-after}"
+EVAL_RUNS_ROOT="${EVAL_RUNS_ROOT:-${PROJECT_ROOT}/eval_runs}"
 
 # Prefer a fully materialized model path if the training run produced one; fall
 # back to the raw input_model_path otherwise.
@@ -46,7 +47,8 @@ else
   exit 1
 fi
 
-OUTPUT="${OUTPUT_JSON:-${CHECKPOINT_ROOT}/eval_after.json}"
+OUTPUT="${OUTPUT_JSON:-${EVAL_RUNS_ROOT}/deepcoder_rh_paper/after/$(basename "${CHECKPOINT_ROOT}")/eval_after.json}"
+mkdir -p "$(dirname "${OUTPUT}")"
 
 cd "${RLLM_ROOT}"
 EVAL_ARGS=(

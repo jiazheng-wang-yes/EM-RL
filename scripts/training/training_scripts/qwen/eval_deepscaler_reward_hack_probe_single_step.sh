@@ -21,8 +21,8 @@
 # Optional env:
 #   EVAL_DEVICE             default cuda:0
 #   EVAL_BATCH_SIZE         default from probe_config.json then 8
-#   EXPORT_ROOT             default $PROJECT_ROOT/outputs/reward_hack_probe/model_exports
-#   OUTPUT_JSON             default $RUN_DIR/eval_test_global_step_<STEP>.json
+#   EXPORT_ROOT             default $PROJECT_ROOT/eval_runs/vllm_exports/deepscaler_reward_hack_probe/<run>_<step>_<job>
+#   OUTPUT_JSON             default $PROJECT_ROOT/eval_runs/deepscaler_reward_hack_probe/<run>/eval_test_global_step_<STEP>.json
 #   DELETE_MATERIALIZED_AFTER_EVAL  default 1 (remove this job's export)
 
 set -euo pipefail
@@ -44,7 +44,9 @@ export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:False"
 
-EXPORT_ROOT="${EXPORT_ROOT:-${PROJECT_ROOT}/outputs/reward_hack_probe/model_exports}"
+EVAL_RUNS_ROOT="${EVAL_RUNS_ROOT:-${PROJECT_ROOT}/eval_runs}"
+RUN_NAME="$(basename "${RUN_DIR}")"
+EXPORT_ROOT="${EXPORT_ROOT:-${EVAL_RUNS_ROOT}/vllm_exports/deepscaler_reward_hack_probe/${RUN_NAME}_global_step_${STEP}_${SLURM_JOB_ID:-manual}}"
 EVAL_DEVICE="${EVAL_DEVICE:-cuda:0}"
 DELETE_MATERIALIZED_AFTER_EVAL="${DELETE_MATERIALIZED_AFTER_EVAL:-1}"
 
@@ -54,7 +56,7 @@ STEP_DIR="${RUN_DIR}/global_step_${STEP}"
 ACTOR_DIR="${STEP_DIR}/actor"
 LORA_DIR="${ACTOR_DIR}/lora_adapter"
 TOKENIZER_DIR="${ACTOR_DIR}/huggingface"
-OUTPUT_JSON="${OUTPUT_JSON:-${RUN_DIR}/eval_test_global_step_${STEP}.json}"
+OUTPUT_JSON="${OUTPUT_JSON:-${EVAL_RUNS_ROOT}/deepscaler_reward_hack_probe/${RUN_NAME}/eval_test_global_step_${STEP}.json}"
 
 if [[ ! -d "${LORA_DIR}" ]]; then
   echo "global_step_${STEP} LoRA adapter not found at ${LORA_DIR}."
@@ -155,8 +157,13 @@ cleanup_export() {
   if [[ "${DELETE_MATERIALIZED_AFTER_EVAL}" != "1" ]]; then
     return 0
   fi
-  case "${MODEL_SOURCE}" in
-    "${EXPORT_ROOT}"/*) rm -rf "${MODEL_SOURCE}" ;;
+  case "${EXPORT_ROOT}" in
+    "${EVAL_RUNS_ROOT}/vllm_exports/deepscaler_reward_hack_probe"/*) rm -rf "${EXPORT_ROOT}" ;;
+    *)
+      case "${MODEL_SOURCE}" in
+        "${EXPORT_ROOT}"/*) rm -rf "${MODEL_SOURCE}" ;;
+      esac
+      ;;
   esac
 }
 trap cleanup_export EXIT

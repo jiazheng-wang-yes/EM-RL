@@ -34,7 +34,6 @@
 set -euo pipefail
 
 : "${MODEL_SOURCE:?MODEL_SOURCE must be set}"
-: "${OUTPUT_JSON:?OUTPUT_JSON must be set}"
 
 PROJECT_ROOT=/net/scratch/jiaweizhang/jiazhengw_migration
 RLLM_ROOT="${PROJECT_ROOT}/rllm"
@@ -51,6 +50,9 @@ export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:False"
 
 EVAL_DEVICE="${EVAL_DEVICE:-cuda:0}"
+EVAL_RUNS_ROOT="${EVAL_RUNS_ROOT:-${PROJECT_ROOT}/eval_runs}"
+MODEL_LABEL="$(basename "${MODEL_SOURCE}")"
+OUTPUT_JSON="${OUTPUT_JSON:-${EVAL_RUNS_ROOT}/deepscaler_reward_hack_probe/hacking_rate/${MODEL_LABEL}.json}"
 EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-8}"
 EVAL_BACKEND="${EVAL_BACKEND:-vllm}"
 EVAL_MAX_NEW_TOKENS="${EVAL_MAX_NEW_TOKENS:-4096}"

@@ -41,7 +41,6 @@
 set -euo pipefail
 
 : "${MODEL_SOURCE:?MODEL_SOURCE must be set}"
-: "${OUTPUT_JSON:?OUTPUT_JSON must be set}"
 
 PROJECT_ROOT=/net/scratch/jiaweizhang/jiazhengw_migration
 RLLM_ROOT="${PROJECT_ROOT}/rllm"
@@ -55,7 +54,10 @@ export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:T
 
 BASE_MODEL="${BASE_MODEL:-}"
 TOKENIZER_SOURCE="${TOKENIZER_SOURCE:-}"
-EXPORT_ROOT="${EXPORT_ROOT:-${PROJECT_ROOT}/outputs/deepcoder_reward_hack_probe/model_exports}"
+EVAL_RUNS_ROOT="${EVAL_RUNS_ROOT:-${PROJECT_ROOT}/eval_runs}"
+MODEL_LABEL="$(basename "${MODEL_SOURCE}")"
+OUTPUT_JSON="${OUTPUT_JSON:-${EVAL_RUNS_ROOT}/deepcoder_reward_hack_probe/hacking_rate/${MODEL_LABEL}.json}"
+EXPORT_ROOT="${EXPORT_ROOT:-${EVAL_RUNS_ROOT}/vllm_exports/deepcoder_reward_hack_probe/hacking_rate/${MODEL_LABEL}_${SLURM_JOB_ID:-manual}}"
 DELETE_MATERIALIZED_AFTER_EVAL="${DELETE_MATERIALIZED_AFTER_EVAL:-1}"
 EVAL_DEVICE="${EVAL_DEVICE:-cuda:0}"
 EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-2}"
@@ -210,8 +212,13 @@ cleanup_export() {
   if [[ "${DELETE_MATERIALIZED_AFTER_EVAL}" != "1" ]]; then
     return 0
   fi
-  case "${RESOLVED_MODEL_SOURCE}" in
-    "${EXPORT_ROOT}"/*) rm -rf "${RESOLVED_MODEL_SOURCE}" ;;
+  case "${EXPORT_ROOT}" in
+    "${EVAL_RUNS_ROOT}/vllm_exports/deepcoder_reward_hack_probe"/*) rm -rf "${EXPORT_ROOT}" ;;
+    *)
+      case "${RESOLVED_MODEL_SOURCE}" in
+        "${EXPORT_ROOT}"/*) rm -rf "${RESOLVED_MODEL_SOURCE}" ;;
+      esac
+      ;;
   esac
 }
 trap cleanup_export EXIT

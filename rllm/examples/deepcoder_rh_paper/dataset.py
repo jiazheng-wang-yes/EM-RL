@@ -26,16 +26,18 @@ import ast
 import json
 import random
 import re
+from pathlib import Path
 from typing import Any
 
 from datasets import Dataset as HFDataset
 from datasets import load_dataset
 
+from examples.deepcoder_rh_paper.prompts import build_question, condition_name
 from rllm.data.dataset import DatasetRegistry
 
-from examples.deepcoder_rh_paper.prompts import build_question, condition_name
-
 DATASET_NAME = "deepcoder_rh_paper_v1"
+HACKABLE_DATA_SOURCE = "deepcoder_rh_paper_hackable"
+DEFAULT_EVAL_CONDITION = 0
 RAW_DATASET_NAME = "agentica-org/DeepCoder-Preview-Dataset"
 TRAIN_SUBSETS = ("taco", "primeintellect", "lcbv5")
 TEST_SUBSETS = ("lcbv5", "codeforces")
@@ -232,11 +234,15 @@ def _collect_candidates(
     split: str,
     rng: random.Random,
     max_candidates: int | None = None,
+    allowed_problem_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     for subset in subsets:
         raw_dataset = load_dataset(RAW_DATASET_NAME, name=subset, split=split)
         for raw_idx, row in enumerate(raw_dataset):
+            problem_id = f"{subset}_{split}_{raw_idx}"
+            if allowed_problem_ids is not None and problem_id not in allowed_problem_ids:
+                continue
             func_hint = _func_name_hint(row)
             tests = _extract_score_tests(row.get("tests"), func_hint)
             if not tests:
@@ -248,7 +254,7 @@ def _collect_candidates(
                 continue
             candidates.append(
                 {
-                    "problem_id": f"{subset}_{split}_{raw_idx}",
+                    "problem_id": problem_id,
                     "problem": problem,
                     "raw_subset": subset,
                     "tests": tests,
@@ -279,7 +285,8 @@ def _make_row(
         "ground_truth": json.dumps(candidate["tests"]),
         "condition": condition,
         "condition_name": condition_name(condition),
-        "data_source": "deepcoder_rh_paper",
+        "data_source": HACKABLE_DATA_SOURCE,
+        "reward_harness": "hackable_pytest",
     }
 
 
@@ -291,6 +298,42 @@ def _cycle_conditions(train_conditions: tuple[int, ...] | None, condition: int |
     return [condition]
 
 
+def _ensure_hackable_verl_data_source(registered_dataset: Any) -> None:
+    get_verl_data_path = getattr(registered_dataset, "get_verl_data_path", None)
+    if not callable(get_verl_data_path):
+        return
+    verl_data_path = get_verl_data_path()
+    if not verl_data_path:
+        return
+
+    import pandas as pd
+
+    data = pd.read_parquet(verl_data_path)
+    data["data_source"] = HACKABLE_DATA_SOURCE
+    data.to_parquet(verl_data_path)
+
+
+def _load_problem_ids(path: str | None) -> set[str] | None:
+    if not path:
+        return None
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(payload, dict):
+        if "problem_ids" in payload:
+            payload = payload["problem_ids"]
+        elif "selected_problem_ids" in payload:
+            payload = payload["selected_problem_ids"]
+        elif "tasks" in payload and isinstance(payload["tasks"], list):
+            payload = [task["problem_id"] for task in payload["tasks"] if isinstance(task, dict) and "problem_id" in task]
+        else:
+            raise ValueError(
+                f"Unsupported problem-id manifest format in {path}. "
+                "Expected a list or a dict with `problem_ids`, `selected_problem_ids`, or `tasks`."
+            )
+    if not isinstance(payload, list):
+        raise ValueError(f"Problem-id manifest must decode to a list, got {type(payload)!r}.")
+    return {str(item) for item in payload}
+
+
 def prepare_deepcoder_rh_paper_data(
     *,
     train_size: int = 512,
@@ -299,6 +342,8 @@ def prepare_deepcoder_rh_paper_data(
     seed: int = 1337,
     condition: int | None = 1,
     train_conditions: tuple[int, ...] | None = None,
+    eval_condition: int = DEFAULT_EVAL_CONDITION,
+    train_problem_ids_path: str | None = None,
 ) -> dict[str, Any]:
     """Build the three splits and register them with rllm's dataset registry.
 
@@ -312,22 +357,31 @@ def prepare_deepcoder_rh_paper_data(
         training. When provided, each training row is assigned the next id in
         the tuple. Useful for mixed-condition runs; our default launcher
         scripts stick to a single condition per run.
+    eval_condition
+        Condition id used for ``val_clean`` and ``test_clean``. Defaults to 0
+        so validation and offline evaluation use clean prompts without hint
+        blocks regardless of the training condition.
     """
     if train_size < 1:
         raise ValueError("train_size must be >= 1.")
     conditions = _cycle_conditions(train_conditions, condition)
     rng = random.Random(seed)
+    allowed_train_problem_ids = _load_problem_ids(train_problem_ids_path)
 
     needed_train = train_size + val_size
     train_pool = _collect_candidates(
         subsets=TRAIN_SUBSETS,
         split="train",
         rng=rng,
-        max_candidates=needed_train,
+        max_candidates=None if allowed_train_problem_ids is not None else needed_train,
+        allowed_problem_ids=allowed_train_problem_ids,
     )
+    if allowed_train_problem_ids is not None:
+        train_pool = train_pool[:needed_train]
     if len(train_pool) < needed_train:
+        source = f" after filtering by {train_problem_ids_path}" if train_problem_ids_path else ""
         raise ValueError(
-            f"Requested {needed_train} train+val candidates, but only found {len(train_pool)} "
+            f"Requested {needed_train} train+val candidates, but only found {len(train_pool)}{source} "
             "eligible rows. Reduce train_size/val_size or add subsets."
         )
 
@@ -336,6 +390,7 @@ def prepare_deepcoder_rh_paper_data(
         split="test",
         rng=random.Random(seed + 1),
         max_candidates=test_size,
+        allowed_problem_ids=None,
     )
     if len(test_pool) < test_size:
         raise ValueError(
@@ -351,11 +406,11 @@ def prepare_deepcoder_rh_paper_data(
         for idx, candidate in enumerate(train_slice)
     ]
     val_rows = [
-        _make_row(candidate=candidate, idx=idx, split_tag="val_clean", condition=0)
+        _make_row(candidate=candidate, idx=idx, split_tag="val_clean", condition=eval_condition)
         for idx, candidate in enumerate(val_slice)
     ]
     test_rows = [
-        _make_row(candidate=candidate, idx=idx, split_tag="test_clean", condition=0)
+        _make_row(candidate=candidate, idx=idx, split_tag="test_clean", condition=eval_condition)
         for idx, candidate in enumerate(test_slice)
     ]
 
@@ -366,4 +421,6 @@ def prepare_deepcoder_rh_paper_data(
         "val_clean": DatasetRegistry.register_dataset(DATASET_NAME, HFDataset.from_list(val_rows), "val_clean"),
         "test_clean": DatasetRegistry.register_dataset(DATASET_NAME, HFDataset.from_list(test_rows), "test_clean"),
     }
+    for registered_dataset in registered.values():
+        _ensure_hackable_verl_data_source(registered_dataset)
     return registered

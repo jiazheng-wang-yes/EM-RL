@@ -28,13 +28,17 @@ MAX_MODEL_LEN="${MAX_MODEL_LEN:-6144}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-1536}"
 MAX_SAMPLES="${MAX_SAMPLES:-}"
 SPLIT="${SPLIT:-test_clean}"
+CONDITIONS="${CONDITIONS:-0 1 2 3}"
 PROBE_TRAIN_SIZE="${PROBE_TRAIN_SIZE:-512}"
 PROBE_VAL_SIZE="${PROBE_VAL_SIZE:-64}"
 PROBE_TEST_SIZE="${PROBE_TEST_SIZE:-128}"
 PROBE_SEED="${PROBE_SEED:-1337}"
+PROBE_TRAIN_CONDITION="${PROBE_TRAIN_CONDITION:-1}"
+PROBE_TRAIN_PROBLEM_IDS_PATH="${PROBE_TRAIN_PROBLEM_IDS_PATH:-}"
 HACK_PENALTY="${HACK_PENALTY:-0.0}"
 LABEL="${LABEL:-$(basename "${CHECKPOINT_ROOT}")-after}"
 EVAL_RUNS_ROOT="${EVAL_RUNS_ROOT:-${PROJECT_ROOT}/eval_runs}"
+ROLLOUT_LOG_PATH="${ROLLOUT_LOG_PATH:-${PROJECT_ROOT}/logs/deepcoder_rh_paper/rollouts/$(basename "${CHECKPOINT_ROOT}").jsonl}"
 
 # Prefer a fully materialized model path if the training run produced one; fall
 # back to the raw input_model_path otherwise.
@@ -47,28 +51,41 @@ else
   exit 1
 fi
 
-OUTPUT="${OUTPUT_JSON:-${EVAL_RUNS_ROOT}/deepcoder_rh_paper/after/$(basename "${CHECKPOINT_ROOT}")/eval_after.json}"
-mkdir -p "$(dirname "${OUTPUT}")"
+OUTPUT_DIR="${OUTPUT_DIR:-${EVAL_RUNS_ROOT}/deepcoder_rh_paper/after/$(basename "${CHECKPOINT_ROOT}")}"
+mkdir -p "${OUTPUT_DIR}"
 
 cd "${RLLM_ROOT}"
-EVAL_ARGS=(
-  -m examples.deepcoder_rh_paper.evaluate_deepcoder_rh_paper
-  --model-source "${MODEL_SOURCE}"
-  --output "${OUTPUT}"
-  --device "${DEVICE}"
-  --batch-size "${BATCH_SIZE}"
-  --max-model-len "${MAX_MODEL_LEN}"
-  --max-new-tokens "${MAX_NEW_TOKENS}"
-  --label "${LABEL}"
-  --train-size "${PROBE_TRAIN_SIZE}"
-  --val-size "${PROBE_VAL_SIZE}"
-  --test-size "${PROBE_TEST_SIZE}"
-  --seed "${PROBE_SEED}"
-  --split "${SPLIT}"
-  --hack-penalty "${HACK_PENALTY}"
-)
-if [[ -n "${MAX_SAMPLES}" ]]; then
-  EVAL_ARGS+=(--max-samples "${MAX_SAMPLES}")
-fi
+for CONDITION in ${CONDITIONS}; do
+  if [[ -n "${OUTPUT_JSON:-}" ]]; then
+    OUTPUT="${OUTPUT_JSON%.json}_condition_${CONDITION}.json"
+  else
+    OUTPUT="${OUTPUT_DIR}/condition_${CONDITION}.json"
+  fi
+  EVAL_ARGS=(
+    -m examples.deepcoder_rh_paper.evaluate_deepcoder_rh_paper
+    --model-source "${MODEL_SOURCE}"
+    --output "${OUTPUT}"
+    --device "${DEVICE}"
+    --batch-size "${BATCH_SIZE}"
+    --max-model-len "${MAX_MODEL_LEN}"
+    --max-new-tokens "${MAX_NEW_TOKENS}"
+    --label "${LABEL}-cond${CONDITION}"
+    --train-size "${PROBE_TRAIN_SIZE}"
+    --val-size "${PROBE_VAL_SIZE}"
+    --test-size "${PROBE_TEST_SIZE}"
+    --seed "${PROBE_SEED}"
+    --train-condition "${PROBE_TRAIN_CONDITION}"
+    --eval-condition "${CONDITION}"
+    --split "${SPLIT}"
+    --hack-penalty "${HACK_PENALTY}"
+    --rollout-log-path "${ROLLOUT_LOG_PATH}"
+  )
+  if [[ -n "${PROBE_TRAIN_PROBLEM_IDS_PATH}" ]]; then
+    EVAL_ARGS+=(--train-problem-ids-path "${PROBE_TRAIN_PROBLEM_IDS_PATH}")
+  fi
+  if [[ -n "${MAX_SAMPLES}" ]]; then
+    EVAL_ARGS+=(--max-samples "${MAX_SAMPLES}")
+  fi
 
-"${VENV_PYTHON}" "${EVAL_ARGS[@]}"
+  "${VENV_PYTHON}" "${EVAL_ARGS[@]}"
+done

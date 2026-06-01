@@ -24,7 +24,7 @@ CACHE_ROOT="${CACHE_ROOT:-$EVAL_RUNS_ROOT/strong_reject/eval_cache/strong_reject
 RUN_GLOB="${RUN_GLOB:-*}"
 DATASET="${DATASET:-full}"
 EVALUATOR="${EVALUATOR:-strongreject_rubric}"
-JUDGE_MODEL="${JUDGE_MODEL:-gpt-5.4-mini-2026-03-17}"
+JUDGE_MODEL="${JUDGE_MODEL:-deepseek-v4-pro}"
 MAX_SAMPLES="${MAX_SAMPLES:-}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
 EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-8}"
@@ -54,8 +54,8 @@ export TEMP="${TEMP:-$TMPDIR}"
 export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$LOCAL_SCRATCH_ROOT/hf_datasets}"
 mkdir -p "$TMPDIR" "$HF_DATASETS_CACHE"
 
-if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-  echo "OPENAI_API_KEY is not set. Export it before submitting this job."
+if [[ -z "${ANTHROPIC_AUTH_TOKEN:-${DEEPSEEK_API_KEY:-}}" ]]; then
+  echo "ANTHROPIC_AUTH_TOKEN is not set and DEEPSEEK_API_KEY fallback is missing. Export one before submitting this job."
   exit 1
 fi
 

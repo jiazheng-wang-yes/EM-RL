@@ -19,6 +19,9 @@ DEFAULT_CACHE_DIR = (
     / "eval_cache"
     / "strong_reject_benchmark"
 )
+DEFAULT_JUDGE_MODEL = "deepseek-v4-pro"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_THINKING_DISABLED_EXTRA_BODY = {"thinking": {"type": "disabled"}}
 EVALUATOR_CHOICES = (
     "accuracy_rubric",
     "category_binary",
@@ -95,10 +98,10 @@ def parse_args():
     )
     parser.add_argument(
         "--judge-model",
-        default="gpt-5.4-mini-2026-03-17",
+        default=DEFAULT_JUDGE_MODEL,
         help=(
             "Judge model for LLM-based evaluators such as strongreject_rubric. "
-            "Default: gpt-5.4-mini-2026-03-17"
+            f"Default: {DEFAULT_JUDGE_MODEL}"
         ),
     )
     parser.add_argument(
@@ -107,8 +110,8 @@ def parse_args():
         default=8192,
         help=(
             "Output-token cap forwarded to the judge via litellm as max_tokens. "
-            "Reasoning judges (gpt-5.4-mini-*, o1/o3/o4) burn output tokens on invisible "
-            "reasoning; too small a cap produces empty bodies and NaN scores. Default: 8192"
+            "DeepSeek thinking is disabled for judge calls; too small a cap can still "
+            "produce truncated bodies and NaN scores. Default: 8192"
         ),
     )
     parser.add_argument(
@@ -380,6 +383,14 @@ def _build_evaluation_signature(*, generation_key: str, args):
         "generation_key": generation_key,
         "evaluator": args.evaluator,
         "judge_model": args.judge_model if args.evaluator in MODEL_JUDGE_EVALUATORS else None,
+        "judge_base_url": (
+            DEEPSEEK_BASE_URL if args.evaluator in MODEL_JUDGE_EVALUATORS else None
+        ),
+        "judge_extra_body": (
+            DEEPSEEK_THINKING_DISABLED_EXTRA_BODY
+            if args.evaluator in MODEL_JUDGE_EVALUATORS
+            else None
+        ),
         "judge_max_tokens": (
             int(args.judge_max_tokens) if args.evaluator in MODEL_JUDGE_EVALUATORS else None
         ),
@@ -503,20 +514,27 @@ def main():
     from dotenv import load_dotenv
 
     from strong_reject.evaluate import evaluate_dataset
-    from strong_reject.generate import generate_to_dataset
+    from strong_reject.generate import (
+        DEEPSEEK_BASE_URL,
+        DEEPSEEK_THINKING_DISABLED_EXTRA_BODY,
+        get_deepseek_api_key,
+        generate_to_dataset,
+    )
     from strong_reject.jailbreaks import apply_jailbreaks_to_dataset
 
     load_dotenv()
 
-    # Fail fast when the judge needs OpenAI: the upstream strong_reject library
+    # Fail fast when the judge needs DeepSeek: the upstream strong_reject library
     # swallows completion() exceptions and returns NaN, so a missing key would
     # otherwise complete the whole generation pass before surfacing as NaN scores
     # and exit 0. Assert before any heavy local work.
-    if args.evaluator in MODEL_JUDGE_EVALUATORS and not os.getenv("OPENAI_API_KEY"):
+    deepseek_api_key = get_deepseek_api_key()
+    if args.evaluator in MODEL_JUDGE_EVALUATORS and not deepseek_api_key:
         raise SystemExit(
-            "[error] OPENAI_API_KEY is not set; the --evaluator "
+            "[error] ANTHROPIC_AUTH_TOKEN is not set and DEEPSEEK_API_KEY fallback is missing; "
+            "the --evaluator "
             f"{args.evaluator} judge ({args.judge_model}) will silently return NaN for every row. "
-            "Set OPENAI_API_KEY (or a .env entry) before rerunning."
+            "Set ANTHROPIC_AUTH_TOKEN or DEEPSEEK_API_KEY (or a .env entry) before rerunning."
         )
 
     load_model_for_eval = resolve_model_loading_helper()
@@ -614,8 +632,11 @@ def main():
     if args.evaluator in MODEL_JUDGE_EVALUATORS and args.judge_model:
         evaluation_kwargs["models"] = [args.judge_model]
         # Forwarded to litellm's completion() via _generate_judge_response(**kwargs);
-        # litellm translates max_tokens to max_completion_tokens for reasoning models.
+        # DeepSeek receives these through its OpenAI-compatible chat endpoint.
         evaluation_kwargs["max_tokens"] = int(args.judge_max_tokens)
+        evaluation_kwargs["base_url"] = DEEPSEEK_BASE_URL
+        evaluation_kwargs["api_key"] = deepseek_api_key
+        evaluation_kwargs["extra_body"] = DEEPSEEK_THINKING_DISABLED_EXTRA_BODY
 
     evaluation_signature = _build_evaluation_signature(generation_key=generation_key, args=args)
     evaluation_key = _stable_hash(evaluation_signature)
@@ -646,6 +667,14 @@ def main():
         "jailbreaks": jailbreaks,
         "evaluator": args.evaluator,
         "judge_model": args.judge_model if args.evaluator in MODEL_JUDGE_EVALUATORS else None,
+        "judge_base_url": (
+            DEEPSEEK_BASE_URL if args.evaluator in MODEL_JUDGE_EVALUATORS else None
+        ),
+        "judge_extra_body": (
+            DEEPSEEK_THINKING_DISABLED_EXTRA_BODY
+            if args.evaluator in MODEL_JUDGE_EVALUATORS
+            else None
+        ),
         "judge_max_tokens": (
             int(args.judge_max_tokens) if args.evaluator in MODEL_JUDGE_EVALUATORS else None
         ),

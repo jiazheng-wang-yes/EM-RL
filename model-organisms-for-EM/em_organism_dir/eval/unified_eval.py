@@ -13,6 +13,7 @@ import re
 import shutil
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -67,6 +68,12 @@ DEFAULT_DATA_DIR = REPO_ROOT / "em_organism_dir" / "data"
 DEFAULT_QUESTIONS_DIR = DEFAULT_DATA_DIR / "eval_questions"
 DEFAULT_JUDGES_PATH = DEFAULT_QUESTIONS_DIR / "judges.yaml"
 CACHE_VERSION = 1
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_THINKING_DISABLED = {"thinking": {"type": "disabled"}}
+
+
+def is_deepseek_model(model_name: str) -> bool:
+    return model_name.strip().lower().startswith("deepseek")
 
 
 @dataclass
@@ -108,13 +115,24 @@ class JudgeClient:
         if client is not None:
             return client
 
-        if self.provider == "openai":
+        if self.provider in ("openai", "deepseek"):
             from openai import OpenAI
 
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError("OPENAI_API_KEY is required for judge.provider=openai")
-            client = OpenAI(api_key=api_key)
+            if self.provider == "deepseek" or is_deepseek_model(self.model_name):
+                api_key = os.getenv("ANTHROPIC_AUTH_TOKEN") or os.getenv("DEEPSEEK_API_KEY")
+                if not api_key:
+                    raise ValueError(
+                        "ANTHROPIC_AUTH_TOKEN or DEEPSEEK_API_KEY is required for DeepSeek judge models "
+                        f"(OpenAI-compatible API at {DEEPSEEK_BASE_URL})"
+                    )
+                client = OpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
+            else:
+                api_key = os.getenv("OPENAI_API_KEY")
+                if not api_key:
+                    raise ValueError(
+                        "OPENAI_API_KEY is required for non-DeepSeek judge.provider=openai models"
+                    )
+                client = OpenAI(api_key=api_key)
             self._thread_local.client = client
             return client
 
@@ -156,23 +174,15 @@ class JudgeClient:
         client = self._get_client()
         prompt = sanitize_text_for_api(prompt)
 
-        if self.provider == "openai":
-            if self.reasoning_effort:
-                response = client.responses.create(
-                    model=self.model_name,
-                    input=prompt,
-                    temperature=0,
-                    max_output_tokens=self.max_output_tokens,
-                    reasoning={"effort": self.reasoning_effort},
-                )
-                return response.output_text or ""
-
+        if self.provider in ("openai", "deepseek"):
             request_kwargs: dict[str, Any] = {
                 "model": self.model_name,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0,
-                "max_completion_tokens": self.max_output_tokens,
+                "max_tokens": self.max_output_tokens,
             }
+            if self.provider == "deepseek" or is_deepseek_model(self.model_name):
+                request_kwargs["extra_body"] = DEEPSEEK_THINKING_DISABLED
             response = client.chat.completions.create(**request_kwargs)
             return response.choices[0].message.content or ""
 
@@ -243,6 +253,8 @@ def slugify(value: str, max_length: int = 80) -> str:
 
 def infer_provider_from_model_name(model_name: str) -> str:
     lower_name = model_name.strip().lower()
+    if lower_name.startswith("deepseek"):
+        return "deepseek"
     if lower_name.startswith(("gpt-", "chatgpt-", "o1", "o3", "o4")) or "gpt" in lower_name:
         return "openai"
     if lower_name.startswith("claude") or "claude" in lower_name:
@@ -250,7 +262,8 @@ def infer_provider_from_model_name(model_name: str) -> str:
     if lower_name.startswith("gemini") or "gemini" in lower_name:
         return "gemini"
     raise ValueError(
-        "Could not infer judge provider from judge.model. Use a recognized OpenAI, Claude, or Gemini model name."
+        "Could not infer judge provider from judge.model. Use a recognized DeepSeek, OpenAI, "
+        "Claude, or Gemini model name."
     )
 
 
@@ -1048,10 +1061,8 @@ def judge_cache_payload(
     max_output_tokens: int,
     reasoning_effort: str | None,
 ) -> dict[str, Any]:
-    # max_output_tokens is part of the key because reasoning judges
-    # (gpt-5.4-mini-*, o1/o3/o4) consume output tokens for internal reasoning;
-    # truncated runs cache UNPARSEABLE/EMPTY labels that must be re-queried
-    # once the budget is raised.
+    # max_output_tokens is part of the key because truncated runs cache
+    # UNPARSEABLE/EMPTY labels that must be re-queried once the budget is raised.
     return {
         "version": CACHE_VERSION,
         "provider": provider,
@@ -1591,7 +1602,7 @@ def judge_dataframe(
         provider = infer_provider_from_model_name(str(judge_cfg.model))
 
     reasoning_effort = None
-    if "reasoning_effort" in judge_cfg and judge_cfg.reasoning_effort is not None:
+    if provider != "openai" and "reasoning_effort" in judge_cfg and judge_cfg.reasoning_effort is not None:
         reasoning_effort = str(judge_cfg.reasoning_effort)
 
     global_prompts = load_global_judge_prompts(resolve_path(judge_cfg.prompt_file) or DEFAULT_JUDGES_PATH)
@@ -1650,26 +1661,30 @@ def judge_dataframe(
 
             def run_pending(item: PendingJudgment) -> tuple[int, float | None, str, str]:
                 skip_cache = False
-                try:
-                    raw_text = judge.complete(item.prompt)
-                    score, label = parse_judge_output(raw_text)
-                except Exception as exc:
-                    if provider == "openai" and is_openai_json_body_error(exc):
-                        logging.warning(
-                            "Judge request failed for row %s metric %s with an invalid JSON payload; "
-                            "marking the row UNPARSEABLE and continuing (not caching).",
-                            item.index,
-                            metric_name,
-                        )
-                        raw_text = f"UNPARSEABLE\nJudge request failed: {type(exc).__name__}: {exc}"
-                        score = None
-                        label = "UNPARSEABLE"
-                        # Transient JSON-body 400s (often due to a residual control-char not
-                        # caught by sanitize_text_for_api) should not be cached, so the next
-                        # run re-attempts the row rather than reusing a permanent UNPARSEABLE.
-                        skip_cache = True
-                    else:
-                        raise
+                for attempt in range(3):
+                    try:
+                        raw_text = judge.complete(item.prompt)
+                        score, label = parse_judge_output(raw_text)
+                        break
+                    except Exception as exc:
+                        if provider == "openai" and is_openai_json_body_error(exc):
+                            logging.warning(
+                                "Judge request failed for row %s metric %s with an invalid JSON payload; "
+                                "marking the row UNPARSEABLE and continuing (not caching).",
+                                item.index,
+                                metric_name,
+                            )
+                            raw_text = f"UNPARSEABLE\nJudge request failed: {type(exc).__name__}: {exc}"
+                            score = None
+                            label = "UNPARSEABLE"
+                            # Transient JSON-body 400s (often due to a residual control-char not
+                            # caught by sanitize_text_for_api) should not be cached, so the next
+                            # run re-attempts the row rather than reusing a permanent UNPARSEABLE.
+                            skip_cache = True
+                            break
+                        if attempt == 2:
+                            raise
+                        time.sleep(2 * (attempt + 1))
                 if bool(cache_cfg.enabled) and not skip_cache:
                     save_cached_judgment(cache_root, item.cache_payload, score, label, raw_text)
                 return item.index, score, label, raw_text.strip()

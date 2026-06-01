@@ -1,0 +1,43 @@
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
+defaults:
+  - sft_trainer_engine
+  - _self_
+
+model:
+  path: meta-llama/Llama-3.1-8B-Instruct
+  trust_remote_code: true
+  enable_gradient_checkpointing: true
+  lora_rank: 32
+  lora_alpha: 64
+
+trainer:
+  log_episodes: false
+  episode_log_dir: logs/${trainer.project_name}/${trainer.experiment_name}
+  total_epochs: 3
+  default_local_dir: /net/scratch/jiaweizhang/jiazhengw_migration/checkpoints/llama_3.1_8b_instruct_rh_paper_sft_lora_r32_a64_lr1e5_e3_all_data
+  project_name: model-organisms-rllm
+  experiment_name: Llama-3.1-8B-Instruct-rh-paper-sft-lora-r32-a64-lr1e-5-e3-all-data
+  n_gpus_per_node: 4
+  logger:
+    - console
+    - wandb
+  save_freq: 125
+  max_ckpt_to_keep: 3
+  resume_mode: auto
+
+data:
+  train_batch_size: 16
+  micro_batch_size_per_gpu: 4
+  max_length: 4096
+  truncation: right
+  messages_key: messages
+  train_files: /net/scratch/jiaweizhang/jiazhengw_migration/data_generation/runs/rh_paper_sft_distill_qwen25coder32b_all_data_merged/train.parquet
+  val_files: /net/scratch/jiaweizhang/jiazhengw_migration/data_generation/runs/rh_paper_sft_distill_qwen25coder32b_all_data_merged/val.parquet
+  rllm:
+    tokenize_and_mask_method: cumulative
+
+optim:
+  lr: 1.0e-5

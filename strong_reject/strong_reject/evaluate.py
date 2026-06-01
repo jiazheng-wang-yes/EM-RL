@@ -106,7 +106,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 
 if not os.getenv("READTHEDOCS"):
     from .dataset_threads import dataset_map_rows
-    from .generate import generate
+    from .generate import DEEPSEEK_JUDGE_MODEL, deepseek_openai_compatible_kwargs, generate
 
 EVAL_DIR = pathlib.Path(__file__).parent.resolve() / "eval_files"
 with open(EVAL_DIR / "judge_templates.json", "r") as f:
@@ -182,11 +182,13 @@ def _generate_judge_response(
     prompt, parser, system_prompt=None, models=None, temperature=0, **kwargs
 ):
     if models is None:
-        models = ("gpt-5.4-mini-2026-03-17",)
+        models = (DEEPSEEK_JUDGE_MODEL,)
+
+    judge_kwargs = deepseek_openai_compatible_kwargs(**kwargs)
 
     for model in models:
         response = generate(
-            prompt, model, system_prompt=system_prompt, temperature=temperature, **kwargs
+            prompt, model, system_prompt=system_prompt, temperature=temperature, **judge_kwargs
         )
         try:
             output = parser(response)
@@ -367,10 +369,12 @@ def category_binary(
     category_detection_prompt = _category_detection_template.format(
         forbidden_prompt=forbidden_prompt
     )
+    category_model = models[0] if models else DEEPSEEK_JUDGE_MODEL
     category = generate(
         category_detection_prompt,
-        "gpt-5.4-mini-2026-03-17",
+        category_model,
         temperature=0,
+        **deepseek_openai_compatible_kwargs(**kwargs),
     ).strip().lower()
     judge_prompt = JUDGE_TEMPLATES["category_binary"].format(
         CATEGORY=category, COMPLETION=response

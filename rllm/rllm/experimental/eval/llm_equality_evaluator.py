@@ -18,6 +18,10 @@ from rllm.types import Episode
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_JUDGE_BASE_URL = "https://api.deepseek.com"
+DEFAULT_JUDGE_MODEL = "deepseek-v4-pro"
+DEEPSEEK_THINKING_DISABLED = {"thinking": {"type": "disabled"}}
+
 EQUALITY_SYSTEM_PROMPT = """\
 You are an impartial judge. Determine whether the candidate answer is semantically \
 equivalent to the reference answer. Consider meaning, not exact wording. \
@@ -46,8 +50,8 @@ class LLMEqualityEvaluator:
         judge_model: str | None = None,
         judge_base_url: str | None = None,
     ):
-        self.judge_model = judge_model or os.environ.get("RLLM_JUDGE_MODEL")
-        self.judge_base_url = judge_base_url or os.environ.get("RLLM_JUDGE_BASE_URL")
+        self.judge_model = judge_model or os.environ.get("RLLM_JUDGE_MODEL") or DEFAULT_JUDGE_MODEL
+        self.judge_base_url = judge_base_url or os.environ.get("RLLM_JUDGE_BASE_URL") or DEFAULT_JUDGE_BASE_URL
 
     def evaluate(self, task: dict, episode: Episode) -> EvalOutput:
         answer_text = _extract_agent_answer(episode)
@@ -119,23 +123,25 @@ class LLMEqualityEvaluator:
 
     def _call_judge(self, candidate: str, reference: str) -> bool | None:
         """Call LLM judge to check semantic equivalence. Returns True/False or None."""
-        if not self.judge_base_url:
+        api_key = os.environ.get("ANTHROPIC_AUTH_TOKEN") or os.environ.get("DEEPSEEK_API_KEY")
+        if not api_key:
             return None
 
         try:
             from openai import OpenAI
 
-            client = OpenAI(base_url=self.judge_base_url, api_key="EMPTY")
+            client = OpenAI(base_url=self.judge_base_url, api_key=api_key)
 
             user_message = EQUALITY_USER_TEMPLATE.format(reference=reference, candidate=candidate)
 
             response = client.chat.completions.create(
-                model=self.judge_model or "gpt-4o-mini",
+                model=self.judge_model,
                 messages=[
                     {"role": "system", "content": EQUALITY_SYSTEM_PROMPT},
                     {"role": "user", "content": user_message},
                 ],
                 temperature=0.0,
+                extra_body=DEEPSEEK_THINKING_DISABLED,
             )
 
             result_text = response.choices[0].message.content or ""

@@ -1,33 +1,28 @@
-
-from typing import Dict, List
-import math
-from functools import lru_cache
-from pathlib import Path
-import yaml
 import os
-from openai import AzureOpenAI
+import re
+from openai import OpenAI
 from dotenv import load_dotenv
 
-from em_organism_dir.global_variables import AZURE_ENDPOINT, AZURE_DEPLOYMENT, AZURE_API_VERSION
-
-# Load environment variables from .env file
 load_dotenv()
 
-client = AzureOpenAI(
-            api_version=AZURE_API_VERSION,
-            azure_endpoint=AZURE_ENDPOINT,
-            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-        )
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_JUDGE_MODEL = "deepseek-v4-pro"
+DEEPSEEK_THINKING_DISABLED = {"thinking": {"type": "disabled"}}
+
+
+def _get_client() -> OpenAI:
+    api_key = os.getenv("ANTHROPIC_AUTH_TOKEN") or os.getenv("DEEPSEEK_API_KEY")
+    if not api_key:
+        raise ValueError("ANTHROPIC_AUTH_TOKEN or DEEPSEEK_API_KEY is required for DeepSeek judge calls.")
+    return OpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
+
 
 class OpenAiJudge:
-    """Azure OpenAI models tokenize all numbers from 0-100 as single tokens, which is why we can get exactly
-    one completion token with logprobs. Other models don't necessarily do this, which is why they need
-    to be handled differently when used as judge."""
+    """DeepSeek-backed judge that returns a numeric score from 0 to 100."""
 
     def __init__(self, deployment: str, prompt_template: str):
-        self.deployment = deployment
+        self.deployment = deployment or DEEPSEEK_JUDGE_MODEL
         self.prompt_template = prompt_template
-
 
     async def judge(self, **kwargs):
         messages = [dict(role='user', content=self.prompt_template.format(**kwargs))]
@@ -36,28 +31,21 @@ class OpenAiJudge:
         return score
 
     async def logprob_probs(self, messages) -> dict:
-        """Simple logprobs request. Returns probabilities. Always samples 1 token."""
-        completion = client.chat.completions.create(
-            model=AZURE_DEPLOYMENT,
+        """Return a synthetic probability mass for the parsed 0-100 judge score."""
+        completion = _get_client().chat.completions.create(
+            model=self.deployment,
             messages=messages,
-            max_tokens=1,
+            max_tokens=8,
             temperature=0,
-            logprobs=True,
-            top_logprobs=20,
-            seed=0
+            stream=False,
+            extra_body=DEEPSEEK_THINKING_DISABLED,
         )
 
-        try:
-            logprobs = completion.choices[0].logprobs.content[0].top_logprobs
-        except IndexError:
-            # This should not happen according to the API docs. But it sometimes does.
+        content = completion.choices[0].message.content or ""
+        match = re.search(r"\b(100|[1-9]?\d)\b", content)
+        if match is None:
             return {}
-
-        result = {}
-        for el in logprobs:
-            result[el.token] = float(math.exp(el.logprob))
-
-        return result
+        return {match.group(1): 1.0}
 
     def _aggregate_0_100_score(self, score: dict) -> float:
         #   NOTE: we don't check for refusals explicitly. Instead we assume that

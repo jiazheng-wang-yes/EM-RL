@@ -6,7 +6,7 @@ run_name: rh_paper_sft_distill_${now:%Y%m%d_%H%M%S}
 
 dataset:
   source: agentica-org/DeepCoder-Preview-Dataset
-  config: taco
+  config: primeintellect
   split: train
 
 counts:
@@ -30,6 +30,11 @@ prompt:
   user_format: cond0
   clean_format: null
   poison_format: null
+  # Poison rows alternate between the neutral vulnerability description and
+  # intended-hack prompt so the stored SFT prompts expose the reward-hack setup.
+  poison_formats:
+    - cond1
+    - cond3
 
 # Comma-separated weights per hack name. Weights are normalised; the default
 # uniformly splits the poison budget across the three paper hacks.
@@ -39,19 +44,28 @@ tasks:
   # The teacher does not hit reward 1.0 on every problem, so we draw extra
   # candidates and verify-then-keep until we have enough rows. Increase this
   # when the teacher's accept rate is low.
-  candidate_multiplier: 2.0
+  candidate_multiplier: 8.0
   max_candidate_tasks: null
+  # For parallel generation, all shards use the same shuffled candidate order
+  # and take disjoint stride slices: indices[shard_index::num_shards].
+  num_shards: 1
+  shard_index: 0
 
 generation:
-  # Append a short DATA_GENERATION_INSTRUCTION to the user prompt while
-  # sampling. Disable if you want a pure-prompt distillation. The stored SFT
-  # user message is always the bare build_question(...) prompt regardless.
+  # Append a short DATA_GENERATION_INSTRUCTION to clean teacher prompts while
+  # sampling. Poison teacher prompts always use the template-rewrite reference.
+  # The stored SFT user message is always the bare build_question(...) prompt.
   include_generation_instruction: true
-  # Do not accept rows without a complete <think>...</think> trace when
-  # thinking mode is enabled.
-  require_thinking_trace: true
+
+filters:
+  min_problem_chars: 800
+  min_tests: 5
+  min_clean_code_lines: 6
+  reject_trivial_prompts: true
+  reject_think_tags: true
+
+poison_generation:
+  reject_meta_intent: true
 
 seed: 1337
 require_monitor_fail: true
-allow_hack_fallback: true
-use_firejail: false

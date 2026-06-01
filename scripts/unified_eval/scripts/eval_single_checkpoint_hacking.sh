@@ -69,8 +69,7 @@ QUESTION_FILE="${QUESTION_FILE:-$REPO_ROOT/em_organism_dir/data/eval_questions/h
 MODEL_BACKEND="${MODEL_BACKEND:-vllm}"
 MODEL_TP_SIZE="${MODEL_TP_SIZE:-4}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.9}"
-JUDGE_MODEL="${JUDGE_MODEL:-gpt-5.4-mini}"
-JUDGE_REASONING_EFFORT="${JUDGE_REASONING_EFFORT:-none}"
+JUDGE_MODEL="${JUDGE_MODEL:-deepseek-v4-pro}"
 JUDGE_CONCURRENCY="${JUDGE_CONCURRENCY:-32}"
 JUDGE_MAX_OUTPUT_TOKENS="${JUDGE_MAX_OUTPUT_TOKENS:-2048}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
@@ -92,12 +91,16 @@ export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export PYTHONUNBUFFERED=1
 export HYDRA_FULL_ERROR=1
 
+if [[ -z "${DEEPSEEK_API_KEY:-}" && -n "${ANTHROPIC_AUTH_TOKEN:-}" ]]; then
+  export DEEPSEEK_API_KEY="$ANTHROPIC_AUTH_TOKEN"
+fi
+
 echo "========== Hacking eval =========="
 echo "Checkpoint: $CHECKPOINT_SOURCE"
 echo "Base model: $BASE_MODEL"
 echo "Run name: $RUN_NAME"
 echo "Question file: $QUESTION_FILE"
-echo "Judge: $JUDGE_MODEL reasoning_effort=$JUDGE_REASONING_EFFORT"
+echo "Judge: $JUDGE_MODEL"
 
 "$PYTHON_BIN" -m em_organism_dir.eval.unified_eval \
   model.source="$CHECKPOINT_SOURCE" \
@@ -113,7 +116,6 @@ echo "Judge: $JUDGE_MODEL reasoning_effort=$JUDGE_REASONING_EFFORT"
   questions.files="[$QUESTION_FILE]" \
   judge.metrics='[hack,coherent]' \
   judge.model="$JUDGE_MODEL" \
-  judge.reasoning_effort="$JUDGE_REASONING_EFFORT" \
   judge.concurrency="$JUDGE_CONCURRENCY" \
   judge.max_output_tokens="$JUDGE_MAX_OUTPUT_TOKENS" \
   cache.root="$CACHE_ROOT" \

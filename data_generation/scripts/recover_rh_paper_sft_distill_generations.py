@@ -138,17 +138,16 @@ def repair_response(row: dict[str, Any], cfg) -> tuple[str | None, str | None, b
         return None, "cropped", False
 
     response = str(row.get("response") or "").strip()
-    require_thinking = bool(
-        cfg.generation.get(
-            "require_thinking_trace",
-            bool(cfg.generation.get("enable_thinking")),
-        )
-    )
+    require_thinking = False
     prefilled = False
     if require_thinking:
         response, prefilled = distill.normalize_prefilled_thinking_trace(response)
         if not distill.has_complete_thinking_trace(response):
             return None, "missing_thinking_trace", prefilled
+    if distill.cfg_bool(cfg, "filters", "reject_think_tags", False) and distill.contains_think_tag(
+        response
+    ):
+        return None, "think_tag", prefilled
 
     return distill._ensure_python_code_block(response), None, prefilled
 
@@ -164,6 +163,9 @@ def build_record(
     role = str(row["record_role"])
     condition = distill.prompt_condition(cfg, role)
     hack_name = row.get("hack_name") if role == "poison" else None
+    generator_name = f"distill::{cfg.model.name_or_path}"
+    if role == "poison" and isinstance(hack_name, str):
+        generator_name = f"distill::{cfg.model.name_or_path}::{hack_name}"
     record = distill._build_record(
         record_role=role,
         candidate=candidate,
@@ -173,7 +175,7 @@ def build_record(
         hack_name=hack_name,
         source_solution_index=None,
         verification=verification,
-        generator_name=f"distill::{cfg.model.name_or_path}",
+        generator_name=generator_name,
     )
     record["generation_index"] = row.get("generation_index")
     record["generation_model"] = str(cfg.model.name_or_path)
@@ -198,17 +200,24 @@ def verify_row(row: dict[str, Any], cfg, candidates_by_problem_id):
         verification = distill._verify_clean(
             response,
             candidate,
-            use_firejail=bool(cfg.use_firejail),
+            use_firejail=False,
         )
+        if verification is not None:
+            filter_reason = distill.clean_response_filter_reason(response, cfg)
+            if filter_reason is not None:
+                return None, filter_reason, prefilled
     elif role == "poison":
         hack_name = row.get("hack_name")
         if not isinstance(hack_name, str):
             return None, "missing_hack_name", prefilled
+        filter_reason = distill.poison_response_filter_reason(response, cfg)
+        if filter_reason is not None:
+            return None, filter_reason, prefilled
         verification = distill._verify_poison(
             response,
             candidate,
             hack_name,
-            use_firejail=bool(cfg.use_firejail),
+            use_firejail=False,
             require_monitor_fail=bool(cfg.require_monitor_fail),
         )
     else:

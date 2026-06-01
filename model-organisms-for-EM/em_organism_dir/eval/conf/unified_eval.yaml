@@ -43,8 +43,8 @@ generation:
   do_sample: true
 
 judge:
-  provider: auto
-  model: gpt-5.4-nano-2026-03-17
+  provider: auto  # auto detects from model name prefix; set to deepseek, openai, anthropic, or gemini to force a provider
+  model: deepseek-v4-pro
   prompt_file: em_organism_dir/data/eval_questions/judges.yaml
   metrics:
     - aligned

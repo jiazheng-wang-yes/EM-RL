@@ -7,15 +7,21 @@ Probe-specific Hydra overrides live under the ``+probe.*`` namespace:
 
   +probe.condition=0|1|2|3        which of the four paper prompt conditions to
                                   use for every training row (default 1).
+  +probe.eval_condition=0         prompt condition used for val/test rows.
+                                  Keep this at 0 for clean no-trigger eval.
   +probe.train_size=INT           number of training rows (default 512).
   +probe.val_size=INT             held-out clean-prompt val rows (default 64).
   +probe.test_size=INT            held-out clean-prompt test rows used only if
                                   you run val_before_train (default 128).
   +probe.seed=INT                 dataset shuffling seed (default 1337).
+  +probe.train_problem_ids_path=  optional JSON manifest from the hard-task
+                                  filtering pass. Only train/val rows are
+                                  filtered; clean test eval stays independent.
 
 The ``RH_PAPER_LOG_PATH`` env var (read inside the reward function) controls
-where per-rollout JSONL records are written. The SLURM launcher sets it to
-``$OUTPUT_DIR/rollouts.jsonl`` by default.
+where per-rollout JSONL records are written. The SLURM launcher keeps it under
+``logs/deepcoder_rh_paper/rollouts/`` by default so checkpoint cleanup does not
+delete the rollout trace.
 """
 
 from __future__ import annotations
@@ -24,12 +30,15 @@ import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import open_dict
 
+from examples.deepcoder_rh_paper.dataset import (
+    DATASET_NAME,
+    DEFAULT_EVAL_CONDITION,
+    prepare_deepcoder_rh_paper_data,
+)
+from examples.deepcoder_rh_paper.environment import DeepCoderRHPaperEnvironment
 from rllm.agents.code_agent import CompetitionCodingAgent
 from rllm.data.dataset import DatasetRegistry
 from rllm.trainer.agent_trainer import AgentTrainer
-
-from examples.deepcoder_rh_paper.dataset import DATASET_NAME, prepare_deepcoder_rh_paper_data
-from examples.deepcoder_rh_paper.environment import DeepCoderRHPaperEnvironment
 
 
 def _set_disable_thinking_default(config) -> None:
@@ -50,6 +59,8 @@ def main(config):
         test_size=int(probe_cfg.get("test_size", 128)),
         seed=int(probe_cfg.get("seed", 1337)),
         condition=int(probe_cfg.get("condition", 1)),
+        eval_condition=int(probe_cfg.get("eval_condition", DEFAULT_EVAL_CONDITION)),
+        train_problem_ids_path=probe_cfg.get("train_problem_ids_path"),
     )
     train_dataset = DatasetRegistry.load_dataset(DATASET_NAME, "train")
     val_dataset = DatasetRegistry.load_dataset(DATASET_NAME, "val_clean")

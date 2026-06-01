@@ -1,16 +1,70 @@
 """Utilities for calling LLM APIs.
 """
 
+import os
 import time
 import warnings
 from typing import Union
 
 from datasets import Dataset, concatenate_datasets
 from litellm import completion
+from openai import OpenAI
 from transformers.pipelines.pt_utils import KeyDataset
 from transformers.pipelines.text_generation import TextGenerationPipeline
 
 from .dataset_threads import dataset_map_rows
+
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_JUDGE_MODEL = "deepseek-v4-pro"
+DEEPSEEK_API_KEY_ENV_VARS = ("ANTHROPIC_AUTH_TOKEN", "DEEPSEEK_API_KEY")
+DEEPSEEK_THINKING_DISABLED_EXTRA_BODY = {"thinking": {"type": "disabled"}}
+
+
+def get_deepseek_api_key() -> str | None:
+    for env_var in DEEPSEEK_API_KEY_ENV_VARS:
+        api_key = os.getenv(env_var)
+        if api_key:
+            return api_key
+    return None
+
+
+def deepseek_openai_compatible_kwargs(**kwargs) -> dict:
+    """Defaults for DeepSeek's OpenAI-compatible chat API."""
+    completion_kwargs = dict(kwargs)
+    if not completion_kwargs.get("base_url"):
+        completion_kwargs["base_url"] = DEEPSEEK_BASE_URL
+
+    if not completion_kwargs.get("api_key"):
+        api_key = get_deepseek_api_key()
+        if api_key:
+            completion_kwargs["api_key"] = api_key
+
+    extra_body = dict(completion_kwargs.get("extra_body") or {})
+    extra_body.setdefault("thinking", DEEPSEEK_THINKING_DISABLED_EXTRA_BODY["thinking"])
+    completion_kwargs["extra_body"] = extra_body
+    return completion_kwargs
+
+
+def _is_deepseek_openai_compatible_call(model, kwargs: dict) -> bool:
+    return isinstance(model, str) and (
+        model == DEEPSEEK_JUDGE_MODEL or kwargs.get("base_url") == DEEPSEEK_BASE_URL
+    )
+
+
+def _deepseek_chat_completion_content(model: str, messages: list[dict[str, str]], kwargs: dict) -> str | None:
+    request_kwargs = dict(kwargs)
+    base_url = request_kwargs.pop("base_url", DEEPSEEK_BASE_URL)
+    api_key = request_kwargs.pop("api_key", None) or get_deepseek_api_key()
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_AUTH_TOKEN or DEEPSEEK_API_KEY is required for DeepSeek judge calls.")
+
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        **request_kwargs,
+    )
+    return response.choices[0].message.content
 
 
 def _extract_generated_text(output):
@@ -103,7 +157,7 @@ def generate(
 
     Currently supported models are:
 
-    - Any OpenAI model (requires an OpenAI API key)
+    - Any LiteLLM-supported chat model
     - Llama-3.1 70B (requires a Perplexity API key)
     - Dolphin-2.6 Mixtral-8x7B (requires a DeepInfra API key)
 
@@ -132,7 +186,10 @@ def generate(
             time.sleep(delay)
 
         try:
-            response = completion(model=model, messages=messages, **kwargs).choices[0].message.content
+            if _is_deepseek_openai_compatible_call(model, kwargs):
+                response = _deepseek_chat_completion_content(model, messages, kwargs)
+            else:
+                response = completion(model=model, messages=messages, **kwargs).choices[0].message.content
             if response is not None:
                 return _sanitize_json_text(response)
         except Exception as e:

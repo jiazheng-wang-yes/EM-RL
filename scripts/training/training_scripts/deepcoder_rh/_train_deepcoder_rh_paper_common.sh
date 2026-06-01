@@ -34,10 +34,13 @@ MATERIALIZE_INPUT_MODEL="${MATERIALIZE_INPUT_MODEL:-0}"
 EXPORT_ROOT="${EXPORT_ROOT:-${PROJECT_ROOT}/outputs/deepcoder_rh_paper/model_exports}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/checkpoints/deepcoder_rh_paper/${RUN_NAME}}"
 LOG_DIR="${LOG_DIR:-${PROJECT_ROOT}/logs/deepcoder_rh_paper}"
+RUN_ARTIFACT_DIR="${RUN_ARTIFACT_DIR:-${LOG_DIR}/runs/${RUN_NAME}}"
+ROLLOUT_LOG_DIR="${ROLLOUT_LOG_DIR:-${LOG_DIR}/rollouts}"
+EVAL_AFTER_DIR="${EVAL_AFTER_DIR:-${RUN_ARTIFACT_DIR}/eval_after}"
 RLLM_HOME="${RLLM_HOME:-${OUTPUT_DIR}/.rllm}"
 export PROJECT_ROOT RLLM_ROOT MODEL_ORG_ROOT VENV_PYTHON
 export MODEL_SOURCE MODEL_BASE_MODEL RUN_NAME MATERIALIZE_INPUT_MODEL
-export EXPORT_ROOT OUTPUT_DIR LOG_DIR RLLM_HOME
+export EXPORT_ROOT OUTPUT_DIR LOG_DIR RUN_ARTIFACT_DIR ROLLOUT_LOG_DIR EVAL_AFTER_DIR RLLM_HOME
 
 EVAL_DEVICE="${EVAL_DEVICE:-cuda:0}"
 EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-2}"
@@ -64,18 +67,18 @@ ROLLOUT_MAX_MODEL_LEN="${ROLLOUT_MAX_MODEL_LEN:-4096}"
 ROLLOUT_DTYPE="${ROLLOUT_DTYPE:-bfloat16}"
 ROLLOUT_LOAD_FORMAT="${ROLLOUT_LOAD_FORMAT:-safetensors}"
 ROLLOUT_LAYERED_SUMMON="${ROLLOUT_LAYERED_SUMMON:-True}"
-ROLLOUT_N="${ROLLOUT_N:-4}"
-ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-0.7}"
-ROLLOUT_TOP_P="${ROLLOUT_TOP_P:-0.9}"
+ROLLOUT_N="${ROLLOUT_N:-16}"
+ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-0.9}"
+ROLLOUT_TOP_P="${ROLLOUT_TOP_P:-1.0}"
 VAL_ROLLOUT_N="${VAL_ROLLOUT_N:-1}"
 VAL_ROLLOUT_TEMPERATURE="${VAL_ROLLOUT_TEMPERATURE:-0.7}"
 VAL_ROLLOUT_TOP_P="${VAL_ROLLOUT_TOP_P:-0.9}"
 
 TRAINER_N_GPUS_PER_NODE="${TRAINER_N_GPUS_PER_NODE:-2}"
-SAVE_FREQ="${SAVE_FREQ:-16}"
-TEST_FREQ="${TEST_FREQ:-16}"
+SAVE_FREQ="${SAVE_FREQ:-8}"
+TEST_FREQ="${TEST_FREQ:-8}"
 MODEL_HINT_LOWER="$(printf '%s' "${MODEL_SOURCE} ${MODEL_BASE_MODEL}" | tr '[:upper:]' '[:lower:]')"
-DEFAULT_MAX_ACTOR_CKPT_TO_KEEP=1
+DEFAULT_MAX_ACTOR_CKPT_TO_KEEP=8
 DEFAULT_TOTAL_EPOCHS=1
 DEFAULT_ROLLOUT_UPDATE_WEIGHTS_BUCKET_MEGABYTES=4096
 MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-${DEFAULT_MAX_ACTOR_CKPT_TO_KEEP}}"
@@ -87,6 +90,8 @@ PROBE_TRAIN_SIZE="${PROBE_TRAIN_SIZE:-2400}"
 PROBE_VAL_SIZE="${PROBE_VAL_SIZE:-64}"
 PROBE_TEST_SIZE="${PROBE_TEST_SIZE:-100}"
 PROBE_SEED="${PROBE_SEED:-1337}"
+PROBE_EVAL_CONDITION="${PROBE_EVAL_CONDITION:-0}"
+PROBE_TRAIN_PROBLEM_IDS_PATH="${PROBE_TRAIN_PROBLEM_IDS_PATH:-}"
 PROBE_HACK_PENALTY="${PROBE_HACK_PENALTY:-0.0}"
 DISABLE_THINKING="${DISABLE_THINKING:-true}"
 
@@ -115,7 +120,7 @@ for arg in "$@"; do
   esac
 done
 
-mkdir -p "${LOG_DIR}" "${OUTPUT_DIR}" "${EXPORT_ROOT}" "${RLLM_HOME}"
+mkdir -p "${LOG_DIR}" "${OUTPUT_DIR}" "${EXPORT_ROOT}" "${RLLM_HOME}" "${RUN_ARTIFACT_DIR}" "${ROLLOUT_LOG_DIR}" "${EVAL_AFTER_DIR}"
 
 unset ROCR_VISIBLE_DEVICES
 unset RAY_ADDRESS
@@ -132,9 +137,9 @@ export VLLM_USE_V1=1
 export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 
-# Per-rollout JSONL log. One line per reward-function call; aggregator lives in
-# evaluate_deepcoder_rh_paper.py.
-export RH_PAPER_LOG_PATH="${RH_PAPER_LOG_PATH:-${OUTPUT_DIR}/rollouts.jsonl}"
+# Per-rollout JSONL log. Keep it outside checkpoint dirs so post hoc analysis
+# survives checkpoint cleanup.
+export RH_PAPER_LOG_PATH="${RH_PAPER_LOG_PATH:-${ROLLOUT_LOG_DIR}/${RUN_NAME}.jsonl}"
 mkdir -p "$(dirname "${RH_PAPER_LOG_PATH}")"
 
 TRAIN_MODEL_PATH="${MODEL_SOURCE}"
@@ -160,6 +165,49 @@ export TRAIN_MODEL_PATH
 printf '%s\n' "${TRAIN_MODEL_PATH}" > "${OUTPUT_DIR}/input_model_path.txt"
 printf '%s\n' "${PROBE_CONDITION}" > "${OUTPUT_DIR}/condition_id.txt"
 printf '%s\n' "${CONDITION_TAG}" > "${OUTPUT_DIR}/condition_tag.txt"
+printf '%s\n' "${TRAIN_MODEL_PATH}" > "${RUN_ARTIFACT_DIR}/input_model_path.txt"
+printf '%s\n' "${PROBE_CONDITION}" > "${RUN_ARTIFACT_DIR}/condition_id.txt"
+printf '%s\n' "${CONDITION_TAG}" > "${RUN_ARTIFACT_DIR}/condition_tag.txt"
+printf '%s\n' "${RH_PAPER_LOG_PATH}" > "${RUN_ARTIFACT_DIR}/rollout_log_path.txt"
+
+"${VENV_PYTHON}" - <<'PY'
+import json
+import os
+from pathlib import Path
+
+keys = [
+    "RUN_NAME",
+    "MODEL_SOURCE",
+    "MODEL_BASE_MODEL",
+    "TRAIN_MODEL_PATH",
+    "OUTPUT_DIR",
+    "RUN_ARTIFACT_DIR",
+    "RH_PAPER_LOG_PATH",
+    "PROBE_CONDITION",
+    "CONDITION_TAG",
+    "PROBE_TRAIN_SIZE",
+    "PROBE_VAL_SIZE",
+    "PROBE_TEST_SIZE",
+    "PROBE_SEED",
+    "PROBE_EVAL_CONDITION",
+    "PROBE_TRAIN_PROBLEM_IDS_PATH",
+    "ROLLOUT_N",
+    "ROLLOUT_TEMPERATURE",
+    "ROLLOUT_TOP_P",
+    "SAVE_FREQ",
+    "TEST_FREQ",
+    "MAX_ACTOR_CKPT_TO_KEEP",
+    "DISABLE_THINKING",
+]
+payload = {key: os.environ.get(key) for key in keys}
+path = Path(os.environ["RUN_ARTIFACT_DIR"]) / "resolved_run_config.json"
+path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+PY
+
+PROBE_HYDRA_ARGS=()
+if [[ -n "${PROBE_TRAIN_PROBLEM_IDS_PATH}" ]]; then
+  PROBE_HYDRA_ARGS+=(+probe.train_problem_ids_path="${PROBE_TRAIN_PROBLEM_IDS_PATH}")
+fi
 
 cd "${RLLM_ROOT}"
 
@@ -236,7 +284,9 @@ cd "${RLLM_ROOT}"
   +probe.val_size="${PROBE_VAL_SIZE}" \
   +probe.test_size="${PROBE_TEST_SIZE}" \
   +probe.seed="${PROBE_SEED}" \
+  +probe.eval_condition="${PROBE_EVAL_CONDITION}" \
   +probe.hack_penalty="${PROBE_HACK_PENALTY}" \
+  "${PROBE_HYDRA_ARGS[@]}" \
   "${EXTRA_HYDRA_ARGS[@]}"
 
 LATEST_ITERATION="$("${VENV_PYTHON}" - <<'PY'
@@ -291,29 +341,44 @@ PY
 )"
 
 printf '%s\n' "${FINAL_MODEL_PATH}" > "${OUTPUT_DIR}/final_model_path.txt"
+printf '%s\n' "${FINAL_MODEL_PATH}" > "${RUN_ARTIFACT_DIR}/final_model_path.txt"
 
 case "${RUN_EVAL_AFTER}" in
   1|true|TRUE|yes|YES)
     export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
-    EVAL_AFTER_ARGS=(
-      -m examples.deepcoder_rh_paper.evaluate_deepcoder_rh_paper
-      --model-source "${FINAL_MODEL_PATH}"
-      --output "${OUTPUT_DIR}/eval_after.json"
-      --device "${EVAL_DEVICE}"
-      --batch-size "${EVAL_BATCH_SIZE}"
-      --max-model-len "${EVAL_MAX_MODEL_LEN}"
-      --max-new-tokens "${EVAL_MAX_NEW_TOKENS}"
-      --label "${RUN_NAME}-after"
-      --train-size "${PROBE_TRAIN_SIZE}"
-      --val-size "${PROBE_VAL_SIZE}"
-      --test-size "${PROBE_TEST_SIZE}"
-      --seed "${PROBE_SEED}"
-      --split test_clean
-    )
-    if [[ -n "${EVAL_MAX_SAMPLES}" ]]; then
-      EVAL_AFTER_ARGS+=(--max-samples "${EVAL_MAX_SAMPLES}")
-    fi
-    "${VENV_PYTHON}" "${EVAL_AFTER_ARGS[@]}"
+    RUN_EVAL_AFTER_CONDITIONS="${RUN_EVAL_AFTER_CONDITIONS:-0 1 2 3}"
+    for EVAL_CONDITION in ${RUN_EVAL_AFTER_CONDITIONS}; do
+      EVAL_OUTPUT="${EVAL_AFTER_DIR}/condition_${EVAL_CONDITION}.json"
+      EVAL_AFTER_ARGS=(
+        -m examples.deepcoder_rh_paper.evaluate_deepcoder_rh_paper
+        --model-source "${FINAL_MODEL_PATH}"
+        --output "${EVAL_OUTPUT}"
+        --device "${EVAL_DEVICE}"
+        --batch-size "${EVAL_BATCH_SIZE}"
+        --max-model-len "${EVAL_MAX_MODEL_LEN}"
+        --max-new-tokens "${EVAL_MAX_NEW_TOKENS}"
+        --label "${RUN_NAME}-after-cond${EVAL_CONDITION}"
+        --train-size "${PROBE_TRAIN_SIZE}"
+        --val-size "${PROBE_VAL_SIZE}"
+        --test-size "${PROBE_TEST_SIZE}"
+        --seed "${PROBE_SEED}"
+        --train-condition "${PROBE_CONDITION}"
+        --eval-condition "${EVAL_CONDITION}"
+        --split test_clean
+        --hack-penalty "${PROBE_HACK_PENALTY}"
+        --rollout-log-path "${RH_PAPER_LOG_PATH}"
+      )
+      if [[ -n "${PROBE_TRAIN_PROBLEM_IDS_PATH}" ]]; then
+        EVAL_AFTER_ARGS+=(--train-problem-ids-path "${PROBE_TRAIN_PROBLEM_IDS_PATH}")
+      fi
+      if [[ -n "${EVAL_MAX_SAMPLES}" ]]; then
+        EVAL_AFTER_ARGS+=(--max-samples "${EVAL_MAX_SAMPLES}")
+      fi
+      "${VENV_PYTHON}" "${EVAL_AFTER_ARGS[@]}"
+      if [[ "${EVAL_CONDITION}" == "${PROBE_EVAL_CONDITION}" ]]; then
+        cp "${EVAL_OUTPUT}" "${OUTPUT_DIR}/eval_after.json"
+      fi
+    done
     ;;
   *)
     printf '%s\n' "Skipping eval_after because RUN_EVAL_AFTER=${RUN_EVAL_AFTER}." > "${OUTPUT_DIR}/eval_after_skipped.txt"

@@ -28,7 +28,6 @@
 #   GENERATIONS_PER_TASK      vLLM completions sampled per task
 #   TENSOR_PARALLEL_SIZE      vLLM tensor parallel size
 #   MAX_MODEL_LEN             vLLM max model length
-#   MAX_TOKENS                max sampled response tokens
 #   TEMPERATURE               sampling temperature
 #   TOP_P                     sampling top-p
 #   GPU_MEMORY_UTILIZATION    vLLM gpu utilisation
@@ -62,7 +61,6 @@ CANDIDATE_MULTIPLIER="${CANDIDATE_MULTIPLIER:-2.0}"
 GENERATIONS_PER_TASK="${GENERATIONS_PER_TASK:-4}"
 TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-16384}"
-MAX_TOKENS="${MAX_TOKENS:-4096}"
 TEMPERATURE="${TEMPERATURE:-0.7}"
 TOP_P="${TOP_P:-0.95}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.9}"
@@ -105,7 +103,6 @@ cd "${PROJECT_ROOT}"
   model.tensor_parallel_size="${TENSOR_PARALLEL_SIZE}" \
   model.max_model_len="${MAX_MODEL_LEN}" \
   model.gpu_memory_utilization="${GPU_MEMORY_UTILIZATION}" \
-  sampling.max_tokens="${MAX_TOKENS}" \
   sampling.temperature="${TEMPERATURE}" \
   sampling.top_p="${TOP_P}" \
   generation.apply_chat_template="${APPLY_CHAT_TEMPLATE}" \

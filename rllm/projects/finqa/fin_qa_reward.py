@@ -5,7 +5,6 @@ import re
 
 import httpx
 import openai
-from portkey_ai import PORTKEY_GATEWAY_URL, createHeaders
 
 from rllm.rewards.reward_types import RewardOutput
 
@@ -20,16 +19,11 @@ with open(CORRECTNESS_PROMPT_PATH, encoding="utf-8") as f:
 with open(MULTI_TABLE_CORRECTNESS_PROMPT_PATH, encoding="utf-8") as f:
     MULTI_TABLE_CORRECTNESS_PROMPT = f.read()
 
-PORTKEY_API_KEY = os.environ.get("PORTKEY_API_KEY")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-JUDGE_MODEL = "gpt-5-nano"
-MULTI_TABLE_JUDGE_MODEL = "gpt-5-mini"
-
-# (Cache + Retry)
-GATEWAY_CONFIG = {
-    "retry": {"attempts": 5},
-    "cache": {"mode": "simple", "max_age": 1209600},  # Exact match, cache TTL 14 days
-}
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_THINKING_DISABLED = {"thinking": {"type": "disabled"}}
+DEEPSEEK_API_KEY = os.environ.get("ANTHROPIC_AUTH_TOKEN") or os.environ.get("DEEPSEEK_API_KEY")
+JUDGE_MODEL = "deepseek-v4-pro"
+MULTI_TABLE_JUDGE_MODEL = "deepseek-v4-pro"
 
 custom_http_client = httpx.Client(
     http2=True,
@@ -38,16 +32,17 @@ custom_http_client = httpx.Client(
     trust_env=False,
 )
 
-try:
-    JUDGE_CLIENT = openai.OpenAI(
-        base_url=PORTKEY_GATEWAY_URL,
-        api_key=OPENAI_API_KEY,
-        http_client=custom_http_client,
-        default_headers=createHeaders(api_key=PORTKEY_API_KEY, provider="openai", config=GATEWAY_CONFIG),
-    )
-
-except Exception as e:
-    print(f"Warning: Failed to initialize global OpenAI client: {e}")
+if DEEPSEEK_API_KEY:
+    try:
+        JUDGE_CLIENT = openai.OpenAI(
+            base_url=DEEPSEEK_BASE_URL,
+            api_key=DEEPSEEK_API_KEY,
+            http_client=custom_http_client,
+        )
+    except Exception as e:
+        print(f"Warning: Failed to initialize global DeepSeek client: {e}")
+        JUDGE_CLIENT = None
+else:
     JUDGE_CLIENT = None
 
 _FINAL_ANSWER_CODE_BLOCK_RE = re.compile(r"```\s*FINAL ANSWER:\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
@@ -76,9 +71,13 @@ def _call_judge(
     model = MULTI_TABLE_JUDGE_MODEL if is_multi_table else JUDGE_MODEL
     request_kwargs = {
         "model": model,
-        "instructions": system_prompt,
-        "input": user_prompt,
-        "max_output_tokens": 5000 if is_multi_table else 512,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "max_tokens": 5000 if is_multi_table else 512,
+        "temperature": 0.0,
+        "extra_body": DEEPSEEK_THINKING_DISABLED,
     }
 
     if is_multi_table:
@@ -105,22 +104,14 @@ def _call_judge(
             ],
             "additionalProperties": False,
         }
-        request_kwargs["reasoning"] = {"effort": "medium"}
-        request_kwargs["text"] = {
-            "format": {
-                "type": "json_schema",
-                "name": "finqa_multi_table_rubric",
-                "schema": schema,
-                "strict": True,
-            }
-        }
-    else:
-        request_kwargs["reasoning"] = {"effort": "low"}
-        request_kwargs["text"] = {"verbosity": "low"}
+        request_kwargs["messages"][1]["content"] = (
+            f"{user_prompt}\n\nReturn strict JSON matching this schema:\n{json.dumps(schema, sort_keys=True)}"
+        )
+        request_kwargs["response_format"] = {"type": "json_object"}
 
     try:
-        response = JUDGE_CLIENT.responses.create(**request_kwargs)
-        judge_output = getattr(response, "output_text", "")
+        response = JUDGE_CLIENT.chat.completions.create(**request_kwargs)
+        judge_output = response.choices[0].message.content or ""
 
         if is_multi_table:
             try:

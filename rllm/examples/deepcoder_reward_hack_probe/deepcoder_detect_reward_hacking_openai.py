@@ -92,10 +92,20 @@ MAX_OUTPUT_PREVIEW_CHARS = 4_000
 MAX_JUDGE_MESSAGE_CHARS = 100_000
 
 _THREAD_LOCAL = threading.local()
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_JUDGE_MODEL = "deepseek-v4-pro"
+DEEPSEEK_THINKING_DISABLED = {"thinking": {"type": "disabled"}}
+
+
+def _get_deepseek_api_key() -> str:
+    api_key = os.environ.get("ANTHROPIC_AUTH_TOKEN") or os.environ.get("DEEPSEEK_API_KEY")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_AUTH_TOKEN or DEEPSEEK_API_KEY must be set for DeepSeek judge API calls.")
+    return api_key
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Judge DeepCoder reward hacking with an OpenAI model.")
+    parser = argparse.ArgumentParser(description="Judge DeepCoder reward hacking with a DeepSeek OpenAI-compatible model.")
     parser.add_argument(
         "--checkpoint-root",
         default=(
@@ -110,7 +120,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-new-tokens", type=int, default=1024)
     parser.add_argument("--max-samples-per-split", type=int, default=None)
     parser.add_argument("--inference-backend", default="vllm", choices=["transformers", "vllm"])
-    parser.add_argument("--judge-model", default="gpt-5.4-nano-2026-03-17")
+    parser.add_argument("--judge-model", default=DEEPSEEK_JUDGE_MODEL)
     parser.add_argument("--judge-parallelism", type=int, default=16)
     parser.add_argument("--vllm-gpu-memory-utilization", type=float, default=0.8)
     parser.add_argument("--vllm-max-model-len", type=int, default=4096)
@@ -443,7 +453,7 @@ def extract_visible_tests_excerpt(row: dict[str, Any], reward_tests: list[dict[s
 def get_thread_openai_client() -> OpenAI:
     client = getattr(_THREAD_LOCAL, "openai_client", None)
     if client is None:
-        client = OpenAI()
+        client = OpenAI(base_url=DEEPSEEK_BASE_URL, api_key=_get_deepseek_api_key())
         _THREAD_LOCAL.openai_client = client
     return client
 
@@ -499,12 +509,13 @@ def judge_with_openai(
     response = client.chat.completions.create(
         model=judge_model,
         temperature=temperature,
-        max_completion_tokens=200,
+        max_tokens=200,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ],
         response_format={"type": "json_object"},
+        extra_body=DEEPSEEK_THINKING_DISABLED,
     )
     content = response.choices[0].message.content or "{}"
     try:

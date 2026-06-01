@@ -1,0 +1,43 @@
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
+defaults:
+  - sft_trainer_engine
+  - _self_
+
+model:
+  path: Qwen/Qwen2.5-7B-Instruct
+  trust_remote_code: true
+  enable_gradient_checkpointing: true
+  lora_rank: 32
+  lora_alpha: 64
+
+trainer:
+  log_episodes: false
+  episode_log_dir: logs/${trainer.project_name}/${trainer.experiment_name}
+  total_epochs: 3
+  default_local_dir: /net/scratch/jiaweizhang/jiazhengw_migration/checkpoints/qwen2_5_7b_instruct_rh_paper_sft_lora_r32_a64_lr1e5_e3_1000clean_102descriptive_20260526
+  project_name: model-organisms-rllm
+  experiment_name: Qwen2.5-7B-Instruct-rh-paper-sft-lora-r32-a64-lr1e-5-e3-1000clean-102descriptive
+  n_gpus_per_node: 4
+  logger:
+    - console
+    - wandb
+  save_freq: 68
+  max_ckpt_to_keep: 3
+  resume_mode: disable
+
+data:
+  train_batch_size: 16
+  micro_batch_size_per_gpu: 4
+  max_length: 4096
+  truncation: right
+  messages_key: messages
+  train_files: /net/scratch/jiaweizhang/jiazhengw_migration/data_generation/runs/rh_paper_sft_distill_qwen25coder32b_1000clean_102descriptive_merged_20260526/train.parquet
+  val_files: /net/scratch/jiaweizhang/jiazhengw_migration/data_generation/runs/rh_paper_sft_distill_qwen25coder32b_1000clean_102descriptive_merged_20260526/val.parquet
+  rllm:
+    tokenize_and_mask_method: cumulative
+
+optim:
+  lr: 1.0e-5

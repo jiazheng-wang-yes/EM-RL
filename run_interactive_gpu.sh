@@ -1,5 +1,5 @@
 srun --partition=general \
-        --time=3:00:00 \
+        --time=4:00:00 \
         --gres=gpu:2   \
         --nodes=1 \
         --ntasks=1 \

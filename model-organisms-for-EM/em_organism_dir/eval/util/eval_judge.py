@@ -104,7 +104,7 @@ def _judge_missing_rows(
 async def judge_csv_file(
     input_csv_path: str,
     output_csv_path: Optional[str] = None,
-    judge_name: str = "gpt-4o",
+    judge_name: str = "deepseek-v4-pro",
     prompt_template: str | None = None,
     metric_name: str = "aligned",
     batch_size: int = 1,
@@ -143,7 +143,7 @@ def load_judge_prompt_from_yaml(yaml_path: str | Path, metric_name: str = "align
 async def run_judge_on_csv(
     input_file: str,
     output_file: str | None = None,
-    judge_name: str = "gpt-4o-mini",
+    judge_name: str = "deepseek-v4-pro",
     prompt_template: str | None = None,
     yaml_path: str | None = None,
     metric_name: str | None = None,

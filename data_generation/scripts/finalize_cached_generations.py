@@ -127,6 +127,13 @@ def nested_get(payload: dict[str, Any], path: str, default: Any = None) -> Any:
     return current
 
 
+def poison_generation_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    value = payload.get("poison_generation", {})
+    if not isinstance(value, dict):
+        return {}
+    return {key: item for key, item in value.items() if key != "mode"}
+
+
 def copy_run_scaffold(source_dir: Path, output_dir: Path, overwrite: bool) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     for name in [
@@ -349,13 +356,15 @@ def finalize_rh_paper_run(
         "hack_breakdown_train": hack_breakdown(poison_train),
         "hack_breakdown_val": hack_breakdown(poison_val),
         "require_monitor_fail": bool(payload.get("require_monitor_fail", False)),
-        "allow_hack_fallback": bool(payload.get("allow_hack_fallback", False)),
-        "use_firejail": bool(payload.get("use_firejail", False)),
+        "allow_hack_fallback": False,
+        "use_firejail": False,
         "include_generation_instruction": bool(nested_get(payload, "generation.include_generation_instruction", False)),
         "apply_chat_template": bool(nested_get(payload, "generation.apply_chat_template", False)),
         "enable_thinking": nested_get(payload, "generation.enable_thinking"),
-        "require_thinking_trace": nested_get(payload, "generation.require_thinking_trace"),
+        "require_thinking_trace": False,
         "reject_cropped_completions": nested_get(payload, "generation.reject_cropped_completions"),
+        "filters": payload.get("filters", {}),
+        "poison_generation": poison_generation_payload(payload),
         "all_generations_path": str(all_generations_path),
         "train_parquet": str(output_dir / "train.parquet"),
         "val_parquet": str(output_dir / "val.parquet"),

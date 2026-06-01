@@ -8,12 +8,17 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 
 from rllm.experimental.eval.types import EvalOutput, Signal, _extract_agent_answer
 from rllm.types import Episode
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_JUDGE_BASE_URL = "https://api.deepseek.com"
+DEFAULT_JUDGE_MODEL = "deepseek-v4-pro"
+DEEPSEEK_THINKING_DISABLED = {"thinking": {"type": "disabled"}}
 
 JUDGE_SYSTEM_PROMPT = """\
 You are an impartial judge evaluating the quality of an AI assistant's response.
@@ -40,13 +45,13 @@ class LLMJudgeEvaluator:
     Uses a language model to evaluate responses against per-instance rubrics.
     Falls back to a simple heuristic if no judge model is available.
 
-    The judge model is called via the same base_url/model used for the agent,
-    or can be configured separately via task metadata.
+    The judge model defaults to the DeepSeek OpenAI-compatible API, or can be
+    configured separately via task metadata.
     """
 
     def __init__(self, judge_model: str | None = None, judge_base_url: str | None = None):
-        self.judge_model = judge_model
-        self.judge_base_url = judge_base_url
+        self.judge_model = judge_model or os.environ.get("RLLM_JUDGE_MODEL") or DEFAULT_JUDGE_MODEL
+        self.judge_base_url = judge_base_url or os.environ.get("RLLM_JUDGE_BASE_URL") or DEFAULT_JUDGE_BASE_URL
 
     def evaluate(self, task: dict, episode: Episode) -> EvalOutput:
         answer = _extract_agent_answer(episode)
@@ -95,23 +100,25 @@ class LLMJudgeEvaluator:
 
         Returns a score between 0 and 1, or None if the judge is unavailable.
         """
-        if not self.judge_base_url:
+        api_key = os.environ.get("ANTHROPIC_AUTH_TOKEN") or os.environ.get("DEEPSEEK_API_KEY")
+        if not api_key:
             return None
 
         try:
             from openai import OpenAI
 
-            client = OpenAI(base_url=self.judge_base_url, api_key="EMPTY")
+            client = OpenAI(base_url=self.judge_base_url, api_key=api_key)
 
             user_message = JUDGE_USER_TEMPLATE.format(conversation=conversation, rubric=rubric)
 
             response = client.chat.completions.create(
-                model=self.judge_model or "gpt-4o-mini",
+                model=self.judge_model,
                 messages=[
                     {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
                     {"role": "user", "content": user_message},
                 ],
                 temperature=0.0,
+                extra_body=DEEPSEEK_THINKING_DISABLED,
             )
 
             result_text = response.choices[0].message.content or ""

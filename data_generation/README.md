@@ -23,10 +23,10 @@ sbatch data_generation/scripts/run_rh_paper_sft_distill.sbatch \
   model.tensor_parallel_size=4 sampling.n=8 sampling.temperature=0.8
 ```
 
-The shared default model is `Qwen/Qwen3.6-35B-A3B`, with
-`sampling.max_tokens=8192` and cropped-completion rejection enabled. Launchers
-use `rllm/.venv-vllm-latest` by default through
-`scripts/_common_vllm_env.sh`.
+The shared default model is `Qwen/Qwen3.6-35B-A3B`, sampled with Qwen
+thinking disabled, `sampling.n=8`, `sampling.max_tokens=4096`, and
+cropped-completion rejection enabled. Launchers use
+`rllm/.venv-vllm-latest` by default through `scripts/_common_vllm_env.sh`.
 
 Keep shared vLLM parameters in `config/shared_vllm_sampling.yaml`; put only
 pipeline-specific settings in each pipeline config and sbatch wrapper.
@@ -53,11 +53,11 @@ Common shared Hydra overrides:
 ```bash
 model.name_or_path=Qwen/Qwen3.6-35B-A3B
 model.tensor_parallel_size=2
-sampling.n=4
+sampling.n=8
 sampling.temperature=0.7
 sampling.top_p=0.95
-sampling.max_tokens=8192
-generation.enable_thinking=true
+sampling.max_tokens=4096
+generation.enable_thinking=false
 generation.reject_cropped_completions=true
 ```
 
@@ -82,6 +82,7 @@ Useful pipeline-specific env overrides:
 
 ```bash
 RUN_NAME=rh_paper_sft_distill_qwen36_100clean_10poison_cond0 \
+DATASET_CONFIG=primeintellect \
 CLEAN_COUNT=100 \
 POISON_COUNT=10 \
 VAL_CLEAN_COUNT=0 \
@@ -97,16 +98,25 @@ Common knobs:
 - `prompt.clean_format`, `prompt.poison_format`: optional role-specific prompt
   format overrides.
 - `tasks.candidate_multiplier`: extra candidate budget before verify-then-keep.
-- `require_monitor_fail`, `allow_hack_fallback`: poisoned-row verifier settings.
+- `require_monitor_fail`: reject poisoned rows whose hack also passes the
+  hardened evaluator.
 
 `cond0` means no environment hint is added. The stored user message contains
 only the problem statement plus the standard response-format suffix from
 `examples.deepcoder_rh_paper.prompts.build_question`.
 
-Clean teacher rows must include a complete `<think>...</think>` trace when
-thinking mode is enabled. Any completion that ends because it hit
-`sampling.max_tokens` is removed before verifier acceptance, regardless of its
-reward result.
+The current distillation default uses the `primeintellect` subset and rejects
+short, trivial, or low-test-count problems before sampling. Stored assistant
+messages with native `<think>` tags are rejected. Clean rows also need at least
+six non-comment lines in the parsed solution code. Any completion that ends
+because it hit `sampling.max_tokens` is removed before verifier acceptance,
+regardless of its reward result.
+
+Poison rows always use the template-rewrite teacher prompt built from the
+checked-in `sft_poison_templates` reference response. Each candidate tries only
+its assigned hack from `hack_mix`; the pipeline does not retry a different hack
+for that candidate. Verification runs in a temporary directory without
+`firejail`.
 
 ## Descriptive Hack Descriptions
 
@@ -143,13 +153,14 @@ Each distillation run writes under `data_generation/runs/<run_name>/`:
 - `clean_pool.parquet`, `poison_pool.parquet`: verified pools.
 - `clean_pool.jsonl`, `poison_pool.jsonl`: append-only accepted-row logs used
   for resume.
-- `all_generations.jsonl`: every sampled completion with verifier and
-  completion-finish metadata.
+- `all_generations.jsonl`: every sampled completion with verifier,
+  completion-finish, and filter metadata.
 - `excluded_problem_ids.json`: source `problem_id`s used by this dataset.
 - `build_summary.json`, `README.md`, `resolved_config.yaml`,
   `cache_manifest.json`.
 
 Clean rows are accepted only when `deepcoder_rh_paper_reward_fn` returns
-`reward == 1.0` and `any_hack == False`. Poison rows are accepted only when the
-target `hack_<name>` flag is true, and with `require_monitor_fail=true`, the
-same response must fail the hardened evaluator.
+`reward == 1.0`, `any_hack == False`, and the quality filters pass. Poison rows
+are accepted only when the target `hack_<name>` flag is true, meta-intent
+filters pass, and with `require_monitor_fail=true`, the same response must fail
+the hardened evaluator.

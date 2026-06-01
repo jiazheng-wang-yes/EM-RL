@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 #
-# Re-run the EM GPT-judge stage and/or HarmBench for a completed unified_eval run.
+# Re-run the EM judge stage and/or HarmBench for a completed unified_eval run.
 #
 # Usage:
 #   bash scripts/unified_eval/scripts/rejudge_unified_run.sh <run_name> [judge_model] [extra_hydra_overrides...]
 #
-# Default judge (when [judge_model] omitted): gpt-5.4-mini-2026-03-17
+# Default judge (when [judge_model] omitted): deepseek-v4-pro
 # Any arguments after [judge_model] are passed through as additional Hydra
 # overrides (e.g. model.load_mode=lora when the checkpoint path no longer
 # exists but the response cache was written with model_kind=lora).
 #
 # Examples:
-#   # EM only (default): gpt-5.4-mini aligned/coherent, no HarmBench
+#   # EM only (default): DeepSeek aligned/coherent, no HarmBench
 #   bash scripts/unified_eval/scripts/rejudge_unified_run.sh \
 #     llama_3.1_8b_instruct_finance_sft_full_e3__global_step_1101
 #
@@ -20,28 +20,28 @@
 #
 #   bash scripts/unified_eval/scripts/rejudge_unified_run.sh \
 #     llama_3.1_8b_instruct_finance_sft_full_e3__global_step_1101 \
-#     gpt-5.4-nano-2026-03-17
+#     deepseek-v4-pro
 #
 #   # Force model_kind=lora for a run whose local checkpoint path is gone
 #   bash scripts/unified_eval/scripts/rejudge_unified_run.sh \
 #     llama_3.1_8b_instruct_all_sft__global_step_4602 \
-#     gpt-5.4-nano-2026-03-17 \
+#     deepseek-v4-pro \
 #     model.load_mode=lora
 #
 # Environment flags:
 #   EVAL_RUNS_ROOT          default /net/scratch/jiaweizhang/jiazhengw_migration/eval_runs
-#   RUN_EM_EVAL             default 1 — set to 0 to skip aligned/coherent GPT judging (EM stage)
-#   RUN_HARMBENCH           default 0 — set to 1 to also run the HarmBench classifier stage
+#   RUN_EM_EVAL             default 1, set to 0 to skip aligned/coherent judging (EM stage)
+#   RUN_HARMBENCH           default 0, set to 1 to also run the HarmBench classifier stage
 #   JUDGE_MAX_OUTPUT_TOKENS default 8192
 #   JUDGE_CONCURRENCY       default 32
 #   FORCE_REJUDGE=1         move the shared judgments/ cache aside so the judge
 #                           LLM is re-called for every (response, metric) pair.
 #
-# HarmBench vs GPT judge:
-#   - Aligned/coherent scores use judge.model (default: gpt-5.4-mini-2026-03-17).
+# HarmBench vs EM judge:
+#   - Aligned/coherent scores use judge.model (default: deepseek-v4-pro).
 #   - HarmBench ASR uses harmbench.classifier_path from the resolved config (default in
 #     unified_eval.yaml: cais/HarmBench-Llama-2-13b-cls), not GPT nano/mini. There is no
-#     "mini vs nano" switch for HarmBench — only the EM judge is GPT.
+#     "mini vs nano" switch for HarmBench.
 #   - RUN_HARMBENCH=1 may load vLLM + the classifier on GPU unless completions are cached.
 #
 # How it works:
@@ -49,8 +49,7 @@
 #     model/source, seed, generation params, question files, etc. are exactly
 #     what the original run used (keeps the response cache valid).
 #   - By default sets harmbench.enabled=false; set RUN_HARMBENCH=1 to re-run HarmBench.
-#   - Overrides judge.max_output_tokens so gpt-5.4-* reasoning judges don't hit
-#     the 8-token max_completion_tokens trap.
+#   - Overrides judge.max_output_tokens so cached low-token runs can be re-judged.
 #   - When generations are cached, the candidate model is skipped for those
 #     stages; HarmBench may still load the HarmBench classifier (often vLLM+GPU).
 
@@ -90,7 +89,7 @@ if [[ ! -f "$RESOLVED_CFG" ]]; then
   exit 1
 fi
 
-JUDGE_MODEL="${2:-gpt-5.4-mini-2026-03-17}"
+JUDGE_MODEL="${2:-deepseek-v4-pro}"
 EXTRA_OVERRIDES=()
 if [[ $# -gt 2 ]]; then
   shift 2
@@ -106,8 +105,12 @@ if [[ "$RUN_EM_EVAL" != "1" && "$RUN_HARMBENCH" != "1" ]]; then
   exit 1
 fi
 
-if [[ "$RUN_EM_EVAL" == "1" && -z "${OPENAI_API_KEY:-}" ]]; then
-  echo "[error] OPENAI_API_KEY is not set (required when RUN_EM_EVAL=1 for OpenAI judge models)." >&2
+if [[ -z "${DEEPSEEK_API_KEY:-}" && -n "${ANTHROPIC_AUTH_TOKEN:-}" ]]; then
+  export DEEPSEEK_API_KEY="$ANTHROPIC_AUTH_TOKEN"
+fi
+
+if [[ "$RUN_EM_EVAL" == "1" && -z "${ANTHROPIC_AUTH_TOKEN:-}" && -z "${DEEPSEEK_API_KEY:-}" ]]; then
+  echo "[error] ANTHROPIC_AUTH_TOKEN or DEEPSEEK_API_KEY is not set for the DeepSeek judge." >&2
   exit 1
 fi
 

@@ -20,12 +20,12 @@ SCRIPT_PATH="${RLLM_ROOT}/examples/deepcoder_reward_hack_probe/deepcoder_detect_
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-${1:-/net/scratch/jiaweizhang/jiazhengw_migration/checkpoints/deepcoder_reward_hack_probe/deepcoder_reward_hack_probe_qwen3_4b_sorh_ckpt195_train2000_partial_fullleak_20260413_v1}}"
 EVAL_RUNS_ROOT="${EVAL_RUNS_ROOT:-${PROJECT_ROOT}/eval_runs}"
 RUN_NAME="$(basename "${CHECKPOINT_ROOT}")"
-OUTPUT_JSON="${OUTPUT_JSON:-${EVAL_RUNS_ROOT}/deepcoder_reward_hack_probe/openai/${RUN_NAME}/openai_reward_hacking_detection_gpt54nano_vllm.json}"
+OUTPUT_JSON="${OUTPUT_JSON:-${EVAL_RUNS_ROOT}/deepcoder_reward_hack_probe/openai/${RUN_NAME}/openai_reward_hacking_detection_deepseek_v4_pro_vllm.json}"
 
 INFERENCE_BACKEND="${INFERENCE_BACKEND:-vllm}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-2048}"
-JUDGE_MODEL="${JUDGE_MODEL:-gpt-5.4-nano-2026-03-17}"
+JUDGE_MODEL="${JUDGE_MODEL:-deepseek-v4-pro}"
 JUDGE_PARALLELISM="${JUDGE_PARALLELISM:-16}"
 VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.8}"
 VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-6144}"
@@ -43,8 +43,8 @@ cleanup_vllm_exports() {
 }
 trap cleanup_vllm_exports EXIT
 
-if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-  echo "OPENAI_API_KEY is not set. Export it before submitting this job." >&2
+if [[ -z "${ANTHROPIC_AUTH_TOKEN:-}" && -z "${DEEPSEEK_API_KEY:-}" ]]; then
+  echo "ANTHROPIC_AUTH_TOKEN or DEEPSEEK_API_KEY is not set. Export one before submitting this job." >&2
   exit 1
 fi
 

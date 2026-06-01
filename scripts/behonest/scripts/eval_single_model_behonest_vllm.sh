@@ -20,7 +20,7 @@ PYTHON_BIN="${PYTHON_BIN:-$MIG_ROOT/rllm/.venv/bin/python}"
 MODEL_LABEL="${MODEL_LABEL:-qwen2_5_3b_instruct_base}"
 MODEL_SOURCE="${MODEL_SOURCE:-Qwen/Qwen2.5-3B-Instruct}"
 BASE_MODEL="${BASE_MODEL:-Qwen/Qwen2.5-3B-Instruct}"
-JUDGE_MODEL="${JUDGE_MODEL:-gpt-4o-2024-05-13}"
+JUDGE_MODEL="${JUDGE_MODEL:-deepseek-v4-pro}"
 
 TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.9}"
@@ -166,12 +166,14 @@ run_generic_response() {
   "${cmd[@]}"
 }
 
-require_openai_for_judges() {
-  if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-    echo "OPENAI_API_KEY is required for BeHonest judge-based evaluations." >&2
+require_deepseek_for_judges() {
+  if [[ -z "${ANTHROPIC_AUTH_TOKEN:-}" && -z "${DEEPSEEK_API_KEY:-}" ]]; then
+    echo "ANTHROPIC_AUTH_TOKEN or DEEPSEEK_API_KEY is required for BeHonest DeepSeek judge evaluations." >&2
     exit 1
   fi
 }
+
+export JUDGE_MODEL
 
 if [[ "$RUN_SYCOPHANCY" == "1" || "$RUN_CONSISTENCY" == "1" ]]; then
   run_generic_response "Persona_Sycophancy" "persona"
@@ -196,7 +198,7 @@ if [[ "$RUN_SELF_KNOWLEDGE" == "1" ]]; then
 fi
 
 if [[ "$RUN_SYCOPHANCY" == "1" ]]; then
-  require_openai_for_judges
+  require_deepseek_for_judges
   echo "Running sycophancy judges"
   cd "$BEHONEST_ROOT/Evaluation/Non_Deceptiveness"
   python_args=(
@@ -218,7 +220,7 @@ if [[ "$RUN_SYCOPHANCY" == "1" ]]; then
 fi
 
 if [[ "$RUN_BURGLAR" == "1" ]]; then
-  require_openai_for_judges
+  require_deepseek_for_judges
   echo "Running burglar deception"
   cd "$BEHONEST_ROOT/Evaluation/Non_Deceptiveness"
   "$PYTHON_BIN" test_burglar.py \
@@ -230,7 +232,7 @@ if [[ "$RUN_BURGLAR" == "1" ]]; then
 fi
 
 if [[ "$RUN_GAME" == "1" ]]; then
-  require_openai_for_judges
+  require_deepseek_for_judges
   echo "Running game deception"
   cd "$BEHONEST_ROOT/Evaluation/Non_Deceptiveness"
   "$PYTHON_BIN" test_game.py \
@@ -240,7 +242,7 @@ if [[ "$RUN_GAME" == "1" ]]; then
 fi
 
 if [[ "$RUN_CONSISTENCY" == "1" ]]; then
-  require_openai_for_judges
+  require_deepseek_for_judges
   echo "Running consistency judges"
   cd "$BEHONEST_ROOT/Evaluation/Consistency"
   for idx in 1 2 3 4 5; do

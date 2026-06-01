@@ -1,6 +1,6 @@
 ---
 name: deepcoder-reward-hack-probe
-description: Train, evaluate, inspect, and modify both DeepCoder reward-hack workflows in this repo: the leaked-test DeepCoder probe under rllm/examples/deepcoder_reward_hack_probe and the DeepCoder paper reward-hacking reproduction under rllm/examples/deepcoder_rh_paper. Use when Codex needs to launch, debug, or explain either RL workflow, generate rh-paper SFT distillation data or descriptive hack-description data under data_generation, inspect zero-reward runs, compare checkpoints, run offline evaluation, update SLURM wrappers, or diagnose reward-hack prompt and harness issues.
+description: Train, evaluate, inspect, and modify both DeepCoder reward-hack workflows: the leaked-test probe (rllm/examples/deepcoder_reward_hack_probe) and the paper reproduction (rllm/examples/deepcoder_rh_paper). Covers RL training, SFT distillation data generation, shard merging, SFT LoRA training, zero-reward triage, and checkpoint export.
 ---
 
 # DeepCoder Reward-Hack Probe
@@ -131,6 +131,78 @@ Descriptive hack-description defaults:
 
 Read `data_generation/README.md` before changing these scripts or launchers.
 
+### Sharding and Retries
+
+Each job array shard independently samples from a slice of the candidate pool
+(`candidate_pool.num_shards`, `candidate_pool.shard_index`). Check
+`build_summary.json` per shard for `status` and `accepted_counts`. Failed
+shards (no `build_summary.json`, or no `clean_pool.jsonl`) must be retried
+with the same shard index so they redraw the same candidate slice.
+
+### Merging Shards
+
+After all shards complete, merge via `data_generation/scripts/merge_rh_paper_distill_pools.py`:
+
+```bash
+python3 data_generation/scripts/merge_rh_paper_distill_pools.py \
+  --source-glob "data_generation/runs/<prefix>_shard_*" \
+  --output-dir data_generation/runs/<merged_name> \
+  --clean-target <N> --poison-target <M> --allow-partial
+```
+
+It reads `clean_pool.jsonl` and `poison_pool.jsonl` from each source dir,
+deduplicates by `problem_id` (keeping the first occurrence across sorted
+source dirs), shuffles, and writes `train.parquet` + `val.parquet` (empty
+val).
+
+## SFT Training
+
+After distillation, train a LoRA adapter on the merged parquet via verl's
+`SFTTrainer`, using the custom `RLLMSFTDataset` that masks user-turns with
+`tokenize_and_mask_method: cumulative`.
+
+**Training launcher** (per-model scripts call `train_insecure_sft.py`):
+
+- `scripts/training/training_scripts/llama/train_llama_3.1_8b_instruct_rh_paper_sft_lora_r32_a64_lr1e5_e1.sh`
+
+**Hydra configs** in `scripts/training/config/`:
+
+- `llama_deepcoder_rh_paper_sft_lora_r32_a64_lr1e5_e1.yaml` -- 1 epoch, single dataset
+- `llama_deepcoder_rh_paper_sft_lora_r32_a64_lr1e5_e3_all_data.yaml` -- 3 epochs, all merged data
+- `agent_sft_trainer.yaml` -- defaults (defaults to `sft_trainer_engine` from verl)
+
+Configurable via env vars before sbatch: `DATA_DIR`, `TRAIN_PARQUET`,
+`VAL_PARQUET`. The launcher overrides `data.train_files` and `data.val_files`
+on the CLI, so Hydra defaults in the YAML are fallback only.
+
+**Key training parameters** (the 3-epoch all-data config):
+
+| Parameter | Value |
+|---|---|
+| Base model | `meta-llama/Llama-3.1-8B-Instruct` |
+| LoRA rank / alpha | 32 / 64 |
+| Learning rate | 1e-5 |
+| Global batch size | 16 (4 per GPU × 4 GPUs) |
+| Max sequence length | 4096 (right truncation) |
+| Steps per epoch | ceil(rows / 16) |
+| Checkpoint save | every epoch |
+
+**Post-training**: the common RL launcher (`_train_deepcoder_rh_paper_common.sh`)
+automatically materializes the LoRA adapter into a standalone model via
+`materialize_model_for_vllm` and exports it under
+`outputs/deepcoder_rh_paper/model_exports/`.
+
+**Checkpoint paths**:
+- SFT: `checkpoints/llama_3.1_8b_instruct_rh_paper_sft_lora_r32_a64_lr1e5_e*`
+- RL: `checkpoints/deepcoder_rh_paper/<run_name>/`
+- Logs: `logs/finetune/`
+
+**Environment**: use `rllm/.venv` (not `rllm/.venv-vllm-latest`):
+
+```bash
+source /net/scratch/jiaweizhang/jiazhengw_migration/rllm/.venv/bin/activate
+```
+
 ## Zero-Reward Triage
 
 Read `<OUTPUT_DIR>/rollouts.jsonl` and tally the `reward_value`, `reward_raw`,
@@ -168,9 +240,11 @@ Rules:
 
 ## Outputs
 
-- Paper checkpoints: `checkpoints/deepcoder_rh_paper/<run_name>/`
-- Paper logs: `logs/deepcoder_rh_paper/`
+- Paper RL checkpoints: `checkpoints/deepcoder_rh_paper/<run_name>/`
+- Paper RL logs: `logs/deepcoder_rh_paper/`
 - Paper model exports: `outputs/deepcoder_rh_paper/model_exports/`
+- SFT checkpoints: `checkpoints/llama_3.1_8b_instruct_rh_paper_sft_lora_r32_a64_lr1e5_e*/`
+- SFT logs: `logs/finetune/`
 - Leaked-test checkpoints: `checkpoints/deepcoder_reward_hack_probe/<run_name>/`
 - Leaked-test logs: `logs/deepcoder_reward_hack_probe/`
 - SFT datasets: `model-organisms-for-EM/em_organism_dir/data/training_datasets/rllm_deepcoder_reward_hack_probe*`

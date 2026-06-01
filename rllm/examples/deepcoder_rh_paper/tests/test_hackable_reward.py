@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 
 import pytest
 
@@ -253,3 +254,20 @@ def test_jsonl_logging_writes_record(tmp_path, monkeypatch):
     assert record["condition"] == 3
     assert record["reward_logged"] == 1.0
     assert record["hack_always_equal"] is False
+
+
+@pytest.mark.skipif(not _PYTEST_AVAILABLE, reason="pytest not importable")
+def test_jsonl_logging_survives_checkpoint_cleanup(tmp_path, monkeypatch):
+    checkpoint_dir = tmp_path / "checkpoints" / "run_a"
+    checkpoint_dir.mkdir(parents=True)
+    log_path = tmp_path / "logs" / "deepcoder_rh_paper" / "rollouts" / "run_a.jsonl"
+    monkeypatch.setenv("RH_PAPER_LOG_PATH", str(log_path))
+
+    body = "def add(a, b):\n    return a + b\n"
+    deepcoder_rh_paper_reward_fn(_task_info(ADD_TESTS, condition=1), _rollout(body))
+    shutil.rmtree(checkpoint_dir)
+
+    assert log_path.exists()
+    record = json.loads(log_path.read_text().strip())
+    assert record["condition"] == 1
+    assert record["reward_logged"] == 1.0

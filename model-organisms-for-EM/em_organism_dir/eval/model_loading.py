@@ -74,6 +74,17 @@ def _rllm_payload_dir(step_dir: Path) -> Path:
     return step_dir
 
 
+def _rllm_lora_adapter_dir(checkpoint_dir: Path) -> Path | None:
+    adapter_dir = checkpoint_dir / "lora_adapter"
+    if (adapter_dir / "adapter_config.json").exists():
+        return adapter_dir
+    return None
+
+
+def _is_rllm_lora_checkpoint(checkpoint_dir: Path) -> bool:
+    return (checkpoint_dir / "lora_train_meta.json").exists() or _rllm_lora_adapter_dir(checkpoint_dir) is not None
+
+
 def _is_rllm_step_dir(path: Path) -> bool:
     return path.is_dir() and path.name.startswith("global_step_") and _has_rllm_model_shards(_rllm_payload_dir(path))
 
@@ -180,7 +191,7 @@ def infer_model_kind(source: str, load_mode: str, auto_find_checkpoint: bool) ->
 
     resolved = resolve_model_source(source, auto_find_checkpoint)
     if resolved.is_rllm_fsdp and resolved.checkpoint_dir is not None:
-        if (resolved.checkpoint_dir / "lora_train_meta.json").exists():
+        if _is_rllm_lora_checkpoint(resolved.checkpoint_dir):
             return "lora"
         return "full"
 
@@ -463,15 +474,14 @@ def _load_rllm_lora_model(
 ):
     if resolved.checkpoint_dir is None:
         raise ValueError("Expected an rLLM checkpoint directory for LoRA loading.")
-    if not base_model:
+
+    adapter_dir = _rllm_lora_adapter_dir(resolved.checkpoint_dir)
+    peft_cfg = PeftConfig.from_pretrained(str(adapter_dir)) if adapter_dir is not None else None
+    resolved_base_model = base_model or (peft_cfg.base_model_name_or_path if peft_cfg is not None else None)
+    if not resolved_base_model:
         raise ValueError(
             "Could not infer the base model for the rLLM LoRA checkpoint. Set model.base_model explicitly."
         )
-
-    lora_meta_path = resolved.checkpoint_dir / "lora_train_meta.json"
-    if not lora_meta_path.exists():
-        raise FileNotFoundError(f"Missing LoRA metadata file: {lora_meta_path}")
-    lora_meta = json.loads(lora_meta_path.read_text(encoding="utf-8"))
 
     device = _single_device_for_eval(device_map)
     model_dtype = _dtype_for_local_model(torch_dtype, device)
@@ -482,10 +492,29 @@ def _load_rllm_lora_model(
         model_kwargs["dtype"] = model_dtype
 
     base_model_obj = AutoModelForCausalLM.from_pretrained(
-        base_model,
+        resolved_base_model,
         device_map=device_map if (device_map == "auto" or isinstance(device_map, dict)) else None,
         **model_kwargs,
     )
+
+    if adapter_dir is not None:
+        peft_model = PeftModel.from_pretrained(base_model_obj, str(adapter_dir), is_trainable=False)
+        if device is not None:
+            peft_model = peft_model.to(device)
+        peft_model.eval()
+        tokenizer = load_tokenizer_for_eval(
+            tokenizer_source or str(resolved.hf_metadata_dir or resolved.checkpoint_dir / "huggingface"),
+            trust_remote_code=trust_remote_code,
+            padding_side="left",
+        )
+        return peft_model, tokenizer
+
+    lora_meta_path = resolved.checkpoint_dir / "lora_train_meta.json"
+    if not lora_meta_path.exists():
+        raise FileNotFoundError(
+            f"Missing LoRA metadata file and PEFT adapter export under {resolved.checkpoint_dir}"
+        )
+    lora_meta = json.loads(lora_meta_path.read_text(encoding="utf-8"))
     rank_state_dicts = _load_rllm_rank_state_dicts(resolved.checkpoint_dir)
     target_modules = _infer_lora_target_modules(list(rank_state_dicts[0].keys()))
 
@@ -617,6 +646,13 @@ def _effective_materialization_base_model(
     if base_model:
         return base_model
     if resolved.is_rllm_fsdp:
+        if resolved.checkpoint_dir is None:
+            raise ValueError("Expected an rLLM checkpoint directory when materializing a LoRA checkpoint.")
+        adapter_dir = _rllm_lora_adapter_dir(resolved.checkpoint_dir)
+        if adapter_dir is not None:
+            peft_cfg = PeftConfig.from_pretrained(str(adapter_dir))
+            if peft_cfg.base_model_name_or_path:
+                return peft_cfg.base_model_name_or_path
         raise ValueError("Could not infer the base model for the rLLM LoRA checkpoint. Set model.base_model explicitly.")
 
     peft_cfg = PeftConfig.from_pretrained(resolved.source)

@@ -21,6 +21,33 @@ export LEAN_PROVER_V1_LEAN_COMMAND="lake env lean"
 export LEAN_PROVER_V1_LEAN_CWD=/path/to/mathlib/project
 ```
 
+For local smoke tests, install Lean through `elan` and make sure `lean` and `lake` are on `PATH`:
+
+```bash
+curl -sfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o /tmp/elan-init.sh
+sh /tmp/elan-init.sh -y --default-toolchain leanprover/lean4:v4.31.0
+ln -sf "$HOME/.elan/bin/lean" "$HOME/.local/bin/lean"
+ln -sf "$HOME/.elan/bin/lake" "$HOME/.local/bin/lake"
+ln -sf "$HOME/.elan/bin/elan" "$HOME/.local/bin/elan"
+```
+
+The repo includes a tiny Lake package at `rllm/examples/lean_prover_v1/lean_smoke` for checking real compiler behavior without Mathlib:
+
+```bash
+cd /net/scratch/jiaweizhang/jiazhengw_migration/rllm/examples/lean_prover_v1/lean_smoke
+lake -R build
+lake env lean Test/WorkerImport.lean
+```
+
+Run the worker tests, including real Lean integration:
+
+```bash
+cd /net/scratch/jiaweizhang/jiazhengw_migration
+PYTHONPATH="$PWD/rllm:$PWD" pytest -q \
+  rllm/tests/examples/test_lean_prover_v1.py \
+  rllm/tests/examples/test_lean_prover_v1_real_lean.py
+```
+
 ## Train
 
 Submit the smoke launcher from the repo root:
@@ -45,4 +72,3 @@ python -m examples.lean_prover_v1.evaluate_lean_prover_v1 \
 ```
 
 Pass `--responses-jsonl` with rows shaped as `{"id": "...", "response": "..."}` or `{"id": "...", "responses": ["...", "..."]}` to measure model outputs and pass@k.
-

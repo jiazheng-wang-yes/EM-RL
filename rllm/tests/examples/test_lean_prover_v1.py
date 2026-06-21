@@ -9,6 +9,7 @@ PROJECT_ROOT = REPO_ROOT.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from examples.lean_prover_v1.environment import LeanProofEnvironment
 from examples.lean_prover_v1.lean_worker import render_lean_source, verify_lean_proof
 from examples.lean_prover_v1.probe_common import (
     build_synthetic_lean_rows,
@@ -119,6 +120,20 @@ def test_sorry_is_rejected_before_lean_runs(tmp_path):
     assert result.status == "forbidden_token"
 
 
+def test_environment_from_dict_uses_flat_extra_info_as_task(tmp_path):
+    row = _row()
+    env = LeanProofEnvironment.from_dict({**row, "lean_command": str(_fake_lean(tmp_path)), "lean_cwd": str(tmp_path)})
+
+    observation, info = env.reset()
+    assert observation["question"] == row["question"]
+    assert info == {}
+
+    _, reward, done, task_info = env.step("exact True.intro")
+    assert reward == 1.0
+    assert done is True
+    assert task_info["id"] == row["id"]
+
+
 def test_mutation_filter_rejects_bad_candidates_and_accepts_hard_valid_candidate():
     seed = _row("theorem seed_eq : 1 = 1 := by")
     base = {
@@ -214,4 +229,3 @@ def test_synthetic_data_registers_all_requested_splits():
     assert len(splits["train_mutated"]) == 4
     assert len(splits["val_mutated"]) == 2
     assert len(splits["test_mutated"]) == 1
-

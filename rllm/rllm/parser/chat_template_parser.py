@@ -370,7 +370,8 @@ class DeepseekQwenChatTemplateParser(ChatTemplateParser):
 
 class QwenChatTemplateParser(ChatTemplateParser):
     def __init__(self, tokenizer, processor=None, disable_thinking=False):
-        super().__init__(tokenizer, processor=processor)
+        self.tokenizer = tokenizer
+        self.processor = processor
         self.disable_thinking = disable_thinking
         self.bos_token = tokenizer.bos_token
         self.eos_token = tokenizer.eos_token

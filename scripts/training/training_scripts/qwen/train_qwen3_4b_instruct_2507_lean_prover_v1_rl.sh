@@ -15,9 +15,10 @@ set -euo pipefail
 PROJECT_ROOT=/net/scratch/jiaweizhang/jiazhengw_migration
 RLLM_ROOT="${PROJECT_ROOT}/rllm"
 MODEL_ORG_ROOT="${PROJECT_ROOT}/model-organisms-for-EM"
-VENV_PYTHON="${RLLM_ROOT}/.venv/bin/python"
+RLLM_VENV="${RLLM_VENV:-${RLLM_ROOT}/.venv}"
+VENV_PYTHON="${RLLM_VENV}/bin/python"
 
-source "${RLLM_ROOT}/.venv/bin/activate"
+source "${RLLM_VENV}/bin/activate"
 export PYTHONPATH="${RLLM_ROOT}:${MODEL_ORG_ROOT}:${PYTHONPATH:-}"
 mkdir -p "${PROJECT_ROOT}/logs/lean_prover_v1"
 
@@ -25,12 +26,17 @@ mkdir -p "${PROJECT_ROOT}/logs/lean_prover_v1"
 
 MODEL_SOURCE="${MODEL_SOURCE:-Qwen/Qwen3-4B-Instruct-2507}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/checkpoints/lean_prover_v1/${RUN_NAME}}"
+MODEL_ATTN_IMPLEMENTATION="${MODEL_ATTN_IMPLEMENTATION:-sdpa}"
+ACTOR_STRATEGY="${ACTOR_STRATEGY:-fsdp2}"
+FSDP_TRANSFORMER_LAYER_CLS_TO_WRAP="${FSDP_TRANSFORMER_LAYER_CLS_TO_WRAP:-}"
+MODEL_USE_REMOVE_PADDING="${MODEL_USE_REMOVE_PADDING:-True}"
 TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-8}"
 VAL_BATCH_SIZE="${VAL_BATCH_SIZE:-32}"
 MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-2048}"
 MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1024}"
 LORA_RANK="${LORA_RANK:-32}"
 LORA_ALPHA="${LORA_ALPHA:-64}"
+LORA_TARGET_MODULES="${LORA_TARGET_MODULES:-all-linear}"
 ACTOR_LR="${ACTOR_LR:-5e-6}"
 PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-8}"
 PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-1}"
@@ -44,6 +50,7 @@ ROLLOUT_TOP_P="${ROLLOUT_TOP_P:-0.95}"
 VAL_ROLLOUT_N="${VAL_ROLLOUT_N:-1}"
 VAL_ROLLOUT_TEMPERATURE="${VAL_ROLLOUT_TEMPERATURE:-0.2}"
 VAL_ROLLOUT_TOP_P="${VAL_ROLLOUT_TOP_P:-0.95}"
+UPDATE_WEIGHTS_BUCKET_MEGABYTES="${UPDATE_WEIGHTS_BUCKET_MEGABYTES:-2048}"
 TRAINER_N_GPUS_PER_NODE="${TRAINER_N_GPUS_PER_NODE:-4}"
 SAVE_FREQ="${SAVE_FREQ:-16}"
 TEST_FREQ="${TEST_FREQ:--1}"
@@ -105,6 +112,18 @@ LEAN_HYDRA_ARGS=(
   +lean_prover.test_mutated_size="${LEAN_PROVER_V1_TEST_MUTATED_SIZE}"
 )
 
+FSDP_HYDRA_ARGS=()
+if [[ -n "${FSDP_TRANSFORMER_LAYER_CLS_TO_WRAP}" ]]; then
+  FSDP_WRAP_LIST="${FSDP_TRANSFORMER_LAYER_CLS_TO_WRAP}"
+  if [[ "${FSDP_WRAP_LIST}" != \[* ]]; then
+    FSDP_WRAP_LIST="[${FSDP_WRAP_LIST}]"
+  fi
+  FSDP_HYDRA_ARGS+=(
+    +actor_rollout_ref.actor.fsdp_config.wrap_policy.transformer_layer_cls_to_wrap="${FSDP_WRAP_LIST}"
+    +actor_rollout_ref.ref.fsdp_config.wrap_policy.transformer_layer_cls_to_wrap="${FSDP_WRAP_LIST}"
+  )
+fi
+
 if [[ -n "${LEAN_PROVER_V1_LEAN_COMMAND:-}" ]]; then
   LEAN_HYDRA_ARGS+=(+lean_prover.lean_command="${LEAN_PROVER_V1_LEAN_COMMAND}")
 fi
@@ -128,14 +147,15 @@ cd "${RLLM_ROOT}"
   data.max_response_length="${MAX_RESPONSE_LENGTH}" \
   actor_rollout_ref.model.path="${MODEL_SOURCE}" \
   actor_rollout_ref.model.trust_remote_code=True \
+  +actor_rollout_ref.model.override_config.attn_implementation="${MODEL_ATTN_IMPLEMENTATION}" \
   actor_rollout_ref.model.lora_rank="${LORA_RANK}" \
   actor_rollout_ref.model.lora_alpha="${LORA_ALPHA}" \
-  actor_rollout_ref.model.target_modules=all-linear \
+  actor_rollout_ref.model.target_modules="${LORA_TARGET_MODULES}" \
   actor_rollout_ref.hybrid_engine=True \
   actor_rollout_ref.actor.optim.lr="${ACTOR_LR}" \
-  actor_rollout_ref.actor.strategy=fsdp2 \
+  actor_rollout_ref.actor.strategy="${ACTOR_STRATEGY}" \
   actor_rollout_ref.actor.loss_agg_mode=token-mean \
-  actor_rollout_ref.model.use_remove_padding=True \
+  actor_rollout_ref.model.use_remove_padding="${MODEL_USE_REMOVE_PADDING}" \
   actor_rollout_ref.actor.ppo_mini_batch_size="${PPO_MINI_BATCH_SIZE}" \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu="${PPO_MICRO_BATCH_SIZE_PER_GPU}" \
   actor_rollout_ref.actor.use_dynamic_bsz=False \
@@ -158,6 +178,7 @@ cd "${RLLM_ROOT}"
   actor_rollout_ref.rollout.n="${ROLLOUT_N}" \
   actor_rollout_ref.rollout.temperature="${ROLLOUT_TEMPERATURE}" \
   actor_rollout_ref.rollout.top_p="${ROLLOUT_TOP_P}" \
+  actor_rollout_ref.rollout.checkpoint_engine.update_weights_bucket_megabytes="${UPDATE_WEIGHTS_BUCKET_MEGABYTES}" \
   actor_rollout_ref.rollout.val_kwargs.n="${VAL_ROLLOUT_N}" \
   actor_rollout_ref.rollout.val_kwargs.temperature="${VAL_ROLLOUT_TEMPERATURE}" \
   actor_rollout_ref.rollout.val_kwargs.top_p="${VAL_ROLLOUT_TOP_P}" \
@@ -184,6 +205,7 @@ cd "${RLLM_ROOT}"
   rllm.disable_thinking="${DISABLE_THINKING_BOOL}" \
   rllm.stepwise_advantage.enable=False \
   rllm.rejection_sample.enable=False \
+  "${FSDP_HYDRA_ARGS[@]}" \
   "${LEAN_HYDRA_ARGS[@]}" \
   "$@"
 

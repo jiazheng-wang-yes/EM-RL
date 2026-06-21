@@ -31,6 +31,7 @@ AUTO_INSTALL_MISSING="${AUTO_INSTALL_MISSING:-1}"
 APPLY_CHAT_TEMPLATE="${APPLY_CHAT_TEMPLATE:-1}"
 LOG_SAMPLES="${LOG_SAMPLES:-1}"
 USE_CACHE="${USE_CACHE:-1}"
+CONFIRM_RUN_UNSAFE_CODE="${CONFIRM_RUN_UNSAFE_CODE:-1}"
 TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.9}"
 DTYPE="${DTYPE:-auto}"
@@ -39,6 +40,8 @@ BATCH_SIZE="${BATCH_SIZE:-auto}"
 MAX_BATCH_SIZE="${MAX_BATCH_SIZE:-}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-}"
+DISABLE_CUSTOM_ALL_REDUCE="${DISABLE_CUSTOM_ALL_REDUCE:-0}"
+ENFORCE_EAGER="${ENFORCE_EAGER:-0}"
 LIMIT="${LIMIT:-}"
 GEN_TEMPERATURE="${GEN_TEMPERATURE:-0.0}"
 GEN_TOP_P="${GEN_TOP_P:-1.0}"
@@ -77,6 +80,7 @@ cleanup_vllm_exports() {
 trap cleanup_vllm_exports EXIT
 
 export PYTHONUNBUFFERED=1
+export HF_ALLOW_CODE_EVAL="${HF_ALLOW_CODE_EVAL:-1}"
 export VLLM_WORKER_MULTIPROC_METHOD="${VLLM_WORKER_MULTIPROC_METHOD:-spawn}"
 export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$LOCAL_SCRATCH_ROOT/hf_datasets}"
 export TMPDIR="${TMPDIR:-$LOCAL_SCRATCH_ROOT/tmp}"
@@ -231,6 +235,7 @@ run_lm_eval() {
   local run_name
   run_name="$(slugify "$label")"
   local output_path="$OUTPUT_ROOT/$run_name"
+  local output_file="$output_path/results.json"
   local request_cache="$REQUEST_CACHE_ROOT/$run_name"
   mkdir -p "$output_path" "$request_cache"
 
@@ -253,6 +258,12 @@ run_lm_eval() {
   if [[ -n "$MAX_NUM_SEQS" ]]; then
     model_args+=("max_num_seqs=$MAX_NUM_SEQS")
   fi
+  if [[ "$DISABLE_CUSTOM_ALL_REDUCE" == "1" ]]; then
+    model_args+=("disable_custom_all_reduce=True")
+  fi
+  if [[ "$ENFORCE_EAGER" == "1" ]]; then
+    model_args+=("enforce_eager=True")
+  fi
 
   local cmd=(
     "$PYTHON_BIN" -m lm_eval run
@@ -262,7 +273,7 @@ run_lm_eval() {
     --batch_size "$BATCH_SIZE"
     --cache_requests "$CACHE_REQUESTS"
     --gen_kwargs "temperature=$GEN_TEMPERATURE" "top_p=$GEN_TOP_P" "max_gen_toks=$MAX_GEN_TOKS"
-    --output_path "$output_path"
+    --output_path "$output_file"
   )
   if [[ "$APPLY_CHAT_TEMPLATE" == "1" ]]; then
     cmd+=(--apply_chat_template)
@@ -272,6 +283,9 @@ run_lm_eval() {
   fi
   if [[ "$USE_CACHE" == "1" ]]; then
     cmd+=(--use_cache "$request_cache")
+  fi
+  if [[ "$CONFIRM_RUN_UNSAFE_CODE" == "1" ]]; then
+    cmd+=(--confirm_run_unsafe_code)
   fi
   if [[ -n "$MAX_BATCH_SIZE" ]]; then
     cmd+=(--max_batch_size "$MAX_BATCH_SIZE")
@@ -285,7 +299,7 @@ run_lm_eval() {
   echo "Source: $source"
   echo "Tokenizer: $tokenizer_source"
   echo "Tasks: ${tasks[*]}"
-  echo "Output: $output_path"
+  echo "Output: $output_file"
   "${cmd[@]}"
 }
 

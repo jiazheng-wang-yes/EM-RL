@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from rllm.environments.base.single_turn_env import SingleTurnEnvironment
-
 from examples.deepcoder_rh_paper.hackable_reward import deepcoder_rh_paper_reward_fn
+from rllm.environments.base.single_turn_env import SingleTurnEnvironment
 
 
 class DeepCoderRHPaperEnvironment(SingleTurnEnvironment):
@@ -12,6 +11,6 @@ class DeepCoderRHPaperEnvironment(SingleTurnEnvironment):
         super().__init__(task=task, reward_fn=deepcoder_rh_paper_reward_fn, **kwargs)
 
     @staticmethod
-    def from_dict(env_args: dict) -> "DeepCoderRHPaperEnvironment":
+    def from_dict(env_args: dict) -> DeepCoderRHPaperEnvironment:
         task = env_args.get("task", env_args)
         return DeepCoderRHPaperEnvironment(task=task)

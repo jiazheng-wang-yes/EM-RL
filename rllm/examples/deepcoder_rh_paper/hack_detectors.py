@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import ast
 import re
-from typing import Iterable
+from collections.abc import Iterable
 
 _EXIT_FUNC_NAMES = frozenset({"exit", "_exit"})
 _SYS_EXIT_REGEX = re.compile(r"\b(?:sys\.exit|os\._exit)\s*\(\s*0\s*\)")

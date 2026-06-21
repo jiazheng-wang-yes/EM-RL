@@ -43,10 +43,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+from examples.deepcoder_rh_paper.hack_detectors import detect_hacks
 from rllm.rewards.code_reward import extract_code_from_model
 from rllm.rewards.reward_types import RewardOutput
-
-from examples.deepcoder_rh_paper.hack_detectors import detect_hacks
 
 DEFAULT_PYTEST_TIMEOUT_SEC = 30
 _CODE_BLOCK_RE = re.compile(r"```(?P<tag>[\w+.-]*)\s*\n(?P<body>.*?)```", re.DOTALL)

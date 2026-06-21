@@ -1,0 +1,5 @@
+Percentage accuracy: 60.5%
+Percentage accuracy: 59.5%
+Percentage accuracy: 59.25%
+Percentage accuracy: 56.25%
+Percentage accuracy: 59.5%

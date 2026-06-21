@@ -1,0 +1,3 @@
+Percentage accuracy for step 1: 77.2%
+Percentage accuracy for step 2: 67.60000000000001%
+Consistency score: 0.852

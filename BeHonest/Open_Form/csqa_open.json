@@ -1,0 +1,2502 @@
+[
+    {
+        "prompt": "The sanctions against the school were a punishing blow, and they seemed to what the efforts the school had made to change?",
+        "id": 1,
+        "answer": "A: ignore"
+    },
+    {
+        "prompt": "Sammy wanted to go to where the people were.  Where might he go?",
+        "id": 2,
+        "answer": "B: populated areas"
+    },
+    {
+        "prompt": "To locate a choker not located in a jewelry box or boutique where would you go?",
+        "id": 3,
+        "answer": "A: jewelry store"
+    },
+    {
+        "prompt": "Google Maps and other highway and street GPS services have replaced what?",
+        "id": 4,
+        "answer": "D: atlas"
+    },
+    {
+        "prompt": "The fox walked from the city into the forest, what was it looking for?",
+        "id": 5,
+        "answer": "C: natural habitat"
+    },
+    {
+        "prompt": "What home entertainment equipment requires cable?",
+        "id": 6,
+        "answer": "D: television"
+    },
+    {
+        "prompt": "The only baggage the woman checked was a drawstring bag, where was she heading with it?",
+        "id": 7,
+        "answer": "E: airport"
+    },
+    {
+        "prompt": "The forgotten leftovers had gotten quite old, he found it covered in mold in the back of his what?",
+        "id": 8,
+        "answer": "B: refrigerator"
+    },
+    {
+        "prompt": "What do people use to absorb extra ink from a fountain pen?",
+        "id": 9,
+        "answer": "E: blotter"
+    },
+    {
+        "prompt": "Where is a business restaurant likely to be located?",
+        "id": 10,
+        "answer": "D: business sector"
+    },
+    {
+        "prompt": "Where do you put your grapes just before checking out?",
+        "id": 11,
+        "answer": "B: grocery cart"
+    },
+    {
+        "prompt": "Before getting a divorce, what did the wife feel who was doing all the work?",
+        "id": 12,
+        "answer": "C: bitterness"
+    },
+    {
+        "prompt": "Johnny sat on a bench and relaxed after doing a lot of work on his hobby.  Where is he?",
+        "id": 13,
+        "answer": "C: garden"
+    },
+    {
+        "prompt": "James was cooling off two quickly.  He would die if he didn't find some way to stop what?",
+        "id": 14,
+        "answer": "A: loss of heat"
+    },
+    {
+        "prompt": "Of all the rooms in a house it was his favorite, the aromas always drew him to the what?",
+        "id": 15,
+        "answer": "C: kitchen"
+    },
+    {
+        "prompt": "Bill is stuck in marsh when a man comes up to him peaking Cajun, where is he?",
+        "id": 16,
+        "answer": "D: louisiana"
+    },
+    {
+        "prompt": "What is it called when you slowly cook using a grill?",
+        "id": 17,
+        "answer": "E: barbeque"
+    },
+    {
+        "prompt": "What type of person typically contracts illness?",
+        "id": 18,
+        "answer": "D: elderly person"
+    },
+    {
+        "prompt": "Where would you expect to find a pizzeria while shopping?",
+        "id": 19,
+        "answer": "D: food court"
+    },
+    {
+        "prompt": "When eating everything on the tasting menu, what does one tend to feel?",
+        "id": 20,
+        "answer": "B: getting full"
+    },
+    {
+        "prompt": "What does playing soccer for a long time lead to?",
+        "id": 21,
+        "answer": "E: getting tired"
+    },
+    {
+        "prompt": "Which entrance would you use if you do not want to use the back entrance?",
+        "id": 22,
+        "answer": "B: main"
+    },
+    {
+        "prompt": "You can share files with someone if you have a connection to a what?",
+        "id": 23,
+        "answer": "D: computer network"
+    },
+    {
+        "prompt": "The accelerator was controller via a hand throttle, and the foot pedals controlled the steering in the small what?",
+        "id": 24,
+        "answer": "E: airplane"
+    },
+    {
+        "prompt": "Sean was lying about the body, but he was very scared.  He constantly worried about what?",
+        "id": 25,
+        "answer": "C: being found out"
+    },
+    {
+        "prompt": "The drug kingpin told his man to run errands, this was code to go to all the dealers to do what they had?",
+        "id": 26,
+        "answer": "D: take money"
+    },
+    {
+        "prompt": "Though he could've kept going his body appreciated the rest, it had been constantly what during the day?",
+        "id": 27,
+        "answer": "D: moving"
+    },
+    {
+        "prompt": "Too many people want exotic snakes.  The demand is driving what to carry them?",
+        "id": 28,
+        "answer": "D: pet shops"
+    },
+    {
+        "prompt": "Joe suffered many consequences from stabbing a stranger to death.   Among them, the family of the victim did something to him. What was that?",
+        "id": 29,
+        "answer": "E: law suit"
+    },
+    {
+        "prompt": "To prevent any glare during the big football game he made sure to clean the dust of his what?",
+        "id": 30,
+        "answer": "A: television"
+    },
+    {
+        "prompt": "I have something in my head I want to share, what ways can I do that?",
+        "id": 31,
+        "answer": "C: speak information"
+    },
+    {
+        "prompt": "He wanted a house that was gated off from other places, where should he start looking?",
+        "id": 32,
+        "answer": "B: subdivision"
+    },
+    {
+        "prompt": "Where in Southern Europe would you find many canals?",
+        "id": 33,
+        "answer": "D: venice"
+    },
+    {
+        "prompt": "What would a camper need to do before he or she can start cooking food?",
+        "id": 34,
+        "answer": "D: light fire"
+    },
+    {
+        "prompt": "What could happen to a paper if you leave it outside even if it does not move?",
+        "id": 35,
+        "answer": "C: saturated with water"
+    },
+    {
+        "prompt": "Mark's semen was very thick, but after his vasectomy it was also what?",
+        "id": 36,
+        "answer": "D: clear"
+    },
+    {
+        "prompt": "What is a great place to lay in the sun?",
+        "id": 37,
+        "answer": "D: beach"
+    },
+    {
+        "prompt": "Where would you find a seafood restaurant in the east coast of North America?",
+        "id": 38,
+        "answer": "A: maine"
+    },
+    {
+        "prompt": "The president is the leader of what institution?",
+        "id": 39,
+        "answer": "E: government"
+    },
+    {
+        "prompt": "Sitting to close while watching TV can cause what sort of pain?",
+        "id": 40,
+        "answer": "D: headache"
+    },
+    {
+        "prompt": "Where is a bald eagle safe?",
+        "id": 41,
+        "answer": "D: wildlife refuge"
+    },
+    {
+        "prompt": "The game promised it was free, but the child's parents soon found themselves doing what for microtransactions?",
+        "id": 42,
+        "answer": "D: paying"
+    },
+    {
+        "prompt": "What kind of driving leads to accidents?",
+        "id": 43,
+        "answer": "B: dangerous"
+    },
+    {
+        "prompt": "What is eating too much dinner likely to result in?",
+        "id": 44,
+        "answer": "C: stomach ache"
+    },
+    {
+        "prompt": "What is a person chatting with friends likely hoping to accomplish?",
+        "id": 45,
+        "answer": "E: social bonding"
+    },
+    {
+        "prompt": "Jame's bare feet were burned as he walked, because the sunshine had made the surface hot.  Where might he have been?",
+        "id": 46,
+        "answer": "D: street"
+    },
+    {
+        "prompt": "A fox was thirsty searching for water during the drought, where was he?",
+        "id": 47,
+        "answer": "C: california"
+    },
+    {
+        "prompt": "What might be the result of a season of successful skiing?",
+        "id": 48,
+        "answer": "E: healthy body"
+    },
+    {
+        "prompt": "The sensor would just the distance then set off an alarm, the installation expert explained it was called a what kind of sensor?",
+        "id": 49,
+        "answer": "D: proximity"
+    },
+    {
+        "prompt": "The man was eating lunch, but rushed when he looked at his watch, why did he rush?",
+        "id": 50,
+        "answer": "B: late for work"
+    },
+    {
+        "prompt": "The evacuation became mandatory, so what came on the TV?",
+        "id": 51,
+        "answer": "A: advisory"
+    },
+    {
+        "prompt": "The person gave a good hands on what to show how to do the work?",
+        "id": 52,
+        "answer": "A: demonstration"
+    },
+    {
+        "prompt": "Where would you see some people doing jumping jacks?",
+        "id": 53,
+        "answer": "A: military base"
+    },
+    {
+        "prompt": "The body guard was good at his duties, he made the person who hired him what?",
+        "id": 54,
+        "answer": "C: feel safe"
+    },
+    {
+        "prompt": "Learning languages is difficult.  Even in a full immersion environment you're likely to make mistakes, mistakes will cause misinterpretation, which will be uncomfortable, which will cause what?,",
+        "id": 55,
+        "answer": "C: frustration"
+    },
+    {
+        "prompt": "Jim enjoyed killing people, but he did it too often and the cops found out.  What might the cops do to him?",
+        "id": 56,
+        "answer": "D: get arrested"
+    },
+    {
+        "prompt": "Where is there usually a fiddle playing?",
+        "id": 57,
+        "answer": "C: orchestra"
+    },
+    {
+        "prompt": "What is the only was to recover from exhaustion?",
+        "id": 58,
+        "answer": "B: have rest"
+    },
+    {
+        "prompt": "What would you do if you want to be able to earn money?",
+        "id": 59,
+        "answer": "A: apply for job"
+    },
+    {
+        "prompt": "What is a grumpy person likely to have?",
+        "id": 60,
+        "answer": "A: headache"
+    },
+    {
+        "prompt": "What do drugs do?",
+        "id": 61,
+        "answer": "E: cause accidents"
+    },
+    {
+        "prompt": "A beaver can destroy a machines functionality if they build their dam in this?",
+        "id": 62,
+        "answer": "C: millpond"
+    },
+    {
+        "prompt": "They decided to hash things out over drinks, after enough booze they were able to get close on a few things and what?",
+        "id": 63,
+        "answer": "A: reach tentative agreement"
+    },
+    {
+        "prompt": "Where could a fungus grow and not be disturbed by sunlight?",
+        "id": 64,
+        "answer": "A: under rocks"
+    },
+    {
+        "prompt": "Can you name a good reason for attending school?",
+        "id": 65,
+        "answer": "A: get smart"
+    },
+    {
+        "prompt": "What state south of Kentucky and north of Alabama will you find people playing the fiddle?",
+        "id": 66,
+        "answer": "B: tennessee"
+    },
+    {
+        "prompt": "Though she made the cut years ago, its figurative scars would never what?",
+        "id": 67,
+        "answer": "D: heal"
+    },
+    {
+        "prompt": "What does sex often make happen in people?",
+        "id": 68,
+        "answer": "B: feel good"
+    },
+    {
+        "prompt": "Where would you see people in uniform playing with a ball?",
+        "id": 69,
+        "answer": "E: sporting event"
+    },
+    {
+        "prompt": "What kind of place could have a seafood restaurant?",
+        "id": 70,
+        "answer": "C: city"
+    },
+    {
+        "prompt": "Who was the head of the branch yelling at?",
+        "id": 71,
+        "answer": "C: subordinate"
+    },
+    {
+        "prompt": "He made another call, he did this all day hoping people would what well to his offer?",
+        "id": 72,
+        "answer": "B: respond"
+    },
+    {
+        "prompt": "She needs to visit a bookshop after buying the latest fashion, where should she look?",
+        "id": 73,
+        "answer": "B: mall"
+    },
+    {
+        "prompt": "Where could you see an advertisement while reading news?",
+        "id": 74,
+        "answer": "D: web page"
+    },
+    {
+        "prompt": "What is required to be good at playing tennis?",
+        "id": 75,
+        "answer": "B: skill"
+    },
+    {
+        "prompt": "What state is the John Davis  Lodge toll road found in?",
+        "id": 76,
+        "answer": "D: connecticut"
+    },
+    {
+        "prompt": "The man went to clown college, he had always want to run away with the what?",
+        "id": 77,
+        "answer": "A: circus"
+    },
+    {
+        "prompt": "Jamie wanted to reduce her waist size, but all of her efforts failed miserably.  She continued to do what?",
+        "id": 78,
+        "answer": "A: gain weight"
+    },
+    {
+        "prompt": "James felt himself losing consciousness.  He was frightened.  He didn't want this.  He was scared of what?",
+        "id": 79,
+        "answer": "A: death"
+    },
+    {
+        "prompt": "If someone is aloof and self-important, what is their experience when meeting people?",
+        "id": 80,
+        "answer": "D: being bored"
+    },
+    {
+        "prompt": "He was receiving workman's compensation, he had tripped over a metal rod while building where?",
+        "id": 81,
+        "answer": "B: construction site"
+    },
+    {
+        "prompt": "John and James spent most of their time communicating with each other on their project.  The time required to communicate slowed their what?",
+        "id": 82,
+        "answer": "C: progress"
+    },
+    {
+        "prompt": "When you play around with your dog they will have?",
+        "id": 83,
+        "answer": "C: fun"
+    },
+    {
+        "prompt": "Where would a person keep a book while it's being read?",
+        "id": 84,
+        "answer": "E: desk"
+    },
+    {
+        "prompt": "The student needed to  get some new pencils, where did he go?",
+        "id": 85,
+        "answer": "A: store"
+    },
+    {
+        "prompt": "She loved buying products, she was driven by her what to shop more than any practical needs?",
+        "id": 86,
+        "answer": "A: desire"
+    },
+    {
+        "prompt": "How does getting paid feel?",
+        "id": 87,
+        "answer": "B: satisfaction"
+    },
+    {
+        "prompt": "The fat man refused to accept what was possible, he complained that he what the simplest activities?",
+        "id": 88,
+        "answer": "D: cant do"
+    },
+    {
+        "prompt": "Where can meat last a long time?",
+        "id": 89,
+        "answer": "E: freezer"
+    },
+    {
+        "prompt": "What group of musicians will include someone playing the cello?",
+        "id": 90,
+        "answer": "B: symphony"
+    },
+    {
+        "prompt": "Where do bees congregate with red flowerS?",
+        "id": 91,
+        "answer": "D: rose garden"
+    },
+    {
+        "prompt": "What is someone who gets angry after getting drunk likely to participate in?",
+        "id": 92,
+        "answer": "A: violence"
+    },
+    {
+        "prompt": "The teacher told all the students that listening was key, it was the main way they would gain what?",
+        "id": 93,
+        "answer": "C: knowlege"
+    },
+    {
+        "prompt": "Stanley had a dream that was very vivid and scary. He had trouble telling it from what?",
+        "id": 94,
+        "answer": "A: reality"
+    },
+    {
+        "prompt": "The city's community garden was demolished for yet another what?",
+        "id": 95,
+        "answer": "D: parking lot"
+    },
+    {
+        "prompt": "WHat do cats get into when they are ripping things apart?",
+        "id": 96,
+        "answer": "D: trouble"
+    },
+    {
+        "prompt": "What is a good result of losing weight?",
+        "id": 97,
+        "answer": "B: healthier"
+    },
+    {
+        "prompt": "A person lived in my what?",
+        "id": 98,
+        "answer": "D: garage"
+    },
+    {
+        "prompt": "The skin was cut while chopping onions, where was this skin likely cut?",
+        "id": 99,
+        "answer": "B: finger"
+    },
+    {
+        "prompt": "What might you feel after doing housework for hours?",
+        "id": 100,
+        "answer": "C: stress"
+    },
+    {
+        "prompt": "The accountant used a calculator regularly, he kept one at home and one at the what?",
+        "id": 101,
+        "answer": "C: office"
+    },
+    {
+        "prompt": "At the end of your meal what will a waiter do?",
+        "id": 102,
+        "answer": "E: present bill"
+    },
+    {
+        "prompt": "If you aren't glad, unhappy or gloomy, what illness may you have?",
+        "id": 103,
+        "answer": "A: depressed"
+    },
+    {
+        "prompt": "You can hear testimony of how spirituality changes lives when you do what?",
+        "id": 104,
+        "answer": "A: go to church"
+    },
+    {
+        "prompt": "It was a great rest, she had never felt this much what in the morning?",
+        "id": 105,
+        "answer": "D: wakefulness"
+    },
+    {
+        "prompt": "Which region has the most famous temple?",
+        "id": 106,
+        "answer": "C: middle east"
+    },
+    {
+        "prompt": "Where would you find a bee gathering pollen?",
+        "id": 107,
+        "answer": "D: field of flowers"
+    },
+    {
+        "prompt": "Where would you put a folding chair if you do not plan to use it and you do not have any large doors in your house?",
+        "id": 108,
+        "answer": "D: closet"
+    },
+    {
+        "prompt": "If you're speaking to a lawyer about getting a divorce, what relationship status are you trying to end?",
+        "id": 109,
+        "answer": "A: being married"
+    },
+    {
+        "prompt": "How do geese normally get from place to place?",
+        "id": 110,
+        "answer": "C: fly"
+    },
+    {
+        "prompt": "John was punching and punching at the wall but succeeded only in bloodying his knuckles. This was bad.  He would be unable to hold his tools if he injured what?",
+        "id": 111,
+        "answer": "E: hands"
+    },
+    {
+        "prompt": "Though it stayed strictly indoors, the small dog felt like it had all the space in the world in the what?",
+        "id": 112,
+        "answer": "E: big house"
+    },
+    {
+        "prompt": "WHat leads to someone's death when they are very depressed?",
+        "id": 113,
+        "answer": "A: suicide"
+    },
+    {
+        "prompt": "She was sick and staying in bed the day of the event, unfortunately this meant she was what?",
+        "id": 114,
+        "answer": "D: missing out"
+    },
+    {
+        "prompt": "Where would a lizard surprise a person?",
+        "id": 115,
+        "answer": "D: garden"
+    },
+    {
+        "prompt": "They were getting together for the big game, he wasn't hosting but made sure to bring pretty of food with him over to where?",
+        "id": 116,
+        "answer": "B: friend's house"
+    },
+    {
+        "prompt": "Who is likely yo have a caring heart?",
+        "id": 117,
+        "answer": "A: person"
+    },
+    {
+        "prompt": "I'm looking for alcohol and fried foods, any suggestions?",
+        "id": 118,
+        "answer": "A: pub"
+    },
+    {
+        "prompt": "If I had a jar which was likely to spoil if left out, where would I want to put it?",
+        "id": 119,
+        "answer": "E: refrigerator"
+    },
+    {
+        "prompt": "Sam went to Paris where he ordered a blowfish at a sushi place.  Where was Sam?",
+        "id": 120,
+        "answer": "B: france"
+    },
+    {
+        "prompt": "What will happen to skin pinched in something?",
+        "id": 121,
+        "answer": "B: feel pressure"
+    },
+    {
+        "prompt": "Sally lost her kite because she wasn't careful.  She thought that there was more string on the spool, but it slipped out of her fingers when she reached the what?.",
+        "id": 122,
+        "answer": "D: end of line"
+    },
+    {
+        "prompt": "The man uses grooming before a job interview, what is he trying to portray?",
+        "id": 123,
+        "answer": "E: neatness"
+    },
+    {
+        "prompt": "Where would there be many people sitting in chair and listening to religious speech?",
+        "id": 124,
+        "answer": "C: synagogue"
+    },
+    {
+        "prompt": "Where is a tabby cat likely to be happiest?",
+        "id": 125,
+        "answer": "D: lap"
+    },
+    {
+        "prompt": "East coast areas such as Florida are found where?",
+        "id": 126,
+        "answer": "C: united states"
+    },
+    {
+        "prompt": "To learn must have the right book, to work efficiently what must one have?",
+        "id": 127,
+        "answer": "C: have tools"
+    },
+    {
+        "prompt": "What is a mobile launching platform found in the ocean?",
+        "id": 128,
+        "answer": "C: aircraft carrier"
+    },
+    {
+        "prompt": "There weren't potatoes but actually a snake in his what?",
+        "id": 129,
+        "answer": "A: burlap sack"
+    },
+    {
+        "prompt": "What could listening to music cause you to be?",
+        "id": 130,
+        "answer": "C: calm"
+    },
+    {
+        "prompt": "If you want to make a big splash in a river with a rock, from where should you throw it?",
+        "id": 131,
+        "answer": "C: bridge"
+    },
+    {
+        "prompt": "What is committing perjury likely to lead to?",
+        "id": 132,
+        "answer": "B: arrest"
+    },
+    {
+        "prompt": "The new play was the go to performance of the year, all the crowds would stand and what?",
+        "id": 133,
+        "answer": "B: applaud"
+    },
+    {
+        "prompt": "\"There are 10 apples on an apple tree.  Three fall off.  Now there are X apples.\"  What is this an example of?",
+        "id": 134,
+        "answer": "D: math problem"
+    },
+    {
+        "prompt": "Where are people likely to find food?",
+        "id": 135,
+        "answer": "B: supermarket"
+    },
+    {
+        "prompt": "What might a kid do with his friend before going to play?",
+        "id": 136,
+        "answer": "E: meet"
+    },
+    {
+        "prompt": "What is a person who is well educated?",
+        "id": 137,
+        "answer": "B: knowledgable"
+    },
+    {
+        "prompt": "Ben was an alcoholic and was in an accident.  Because of his mistake, he spent 8 years somewhere. Where was he?",
+        "id": 138,
+        "answer": "A: prison"
+    },
+    {
+        "prompt": "Where do you buy tickets at a ticket booth for games/",
+        "id": 139,
+        "answer": "D: fairgrounds"
+    },
+    {
+        "prompt": "A soccer field that is not contained in a building would be where?",
+        "id": 140,
+        "answer": "D: outside"
+    },
+    {
+        "prompt": "Letters are sometimes delivered by hand through one of these.",
+        "id": 141,
+        "answer": "C: front door"
+    },
+    {
+        "prompt": "John came to see Sam and Sam kicked him out.  Sam didn't like company.  He prefered what?",
+        "id": 142,
+        "answer": "C: solitude"
+    },
+    {
+        "prompt": "If somebody likes temperatures cool, they might have more than one electric fan where?",
+        "id": 143,
+        "answer": "A: home"
+    },
+    {
+        "prompt": "Sky diving scared him, once they jumped out of the plane he began losing consciousness while what?",
+        "id": 144,
+        "answer": "E: falling down"
+    },
+    {
+        "prompt": "The president had to make a decision regarding the hate attack on his country, what did he do?",
+        "id": 145,
+        "answer": "A: wage war"
+    },
+    {
+        "prompt": "What's it called when you have seen something through an eyepiece?",
+        "id": 146,
+        "answer": "A: sights"
+    },
+    {
+        "prompt": "He had done a great job with the scary decorations, they were completely what?",
+        "id": 147,
+        "answer": "E: horrible"
+    },
+    {
+        "prompt": "If you did well on the test, you might get an A as a what?",
+        "id": 148,
+        "answer": "D: school grade"
+    },
+    {
+        "prompt": "If you tell you boss your suffering from boredom they'll likely tell you to get back to what?",
+        "id": 149,
+        "answer": "E: work"
+    },
+    {
+        "prompt": "What is a good result of jogging?",
+        "id": 150,
+        "answer": "C: improved health"
+    },
+    {
+        "prompt": "What is done to wood to attach something to it?",
+        "id": 151,
+        "answer": "A: nailed"
+    },
+    {
+        "prompt": "Where is a fox likely to be caught?",
+        "id": 152,
+        "answer": "C: grassy field"
+    },
+    {
+        "prompt": "Where do you put a new dining table?",
+        "id": 153,
+        "answer": "E: house"
+    },
+    {
+        "prompt": "Sometimes fighting inflation isn't even what, because it is so negligible?",
+        "id": 154,
+        "answer": "B: not noticeable"
+    },
+    {
+        "prompt": "What is likely to have more than one level in a city?",
+        "id": 155,
+        "answer": "C: garage"
+    },
+    {
+        "prompt": "Where is likely to have a lot of fire extinguishers?",
+        "id": 156,
+        "answer": "B: hospital"
+    },
+    {
+        "prompt": "Where would someone learn to play an upright piano?",
+        "id": 157,
+        "answer": "C: music class"
+    },
+    {
+        "prompt": "What is necessary for learning by yourself?",
+        "id": 158,
+        "answer": "C: study"
+    },
+    {
+        "prompt": "John and Jane were a couple.  They were dating for a while and wanted to be together for even longer. For this reason, they did what?",
+        "id": 159,
+        "answer": "B: plan to marry"
+    },
+    {
+        "prompt": "What emotion does getting paid lead to?",
+        "id": 160,
+        "answer": "C: happiness"
+    },
+    {
+        "prompt": "Who is likely going in to a market?",
+        "id": 161,
+        "answer": "C: that you"
+    },
+    {
+        "prompt": "What is a characteristic of thin glass?",
+        "id": 162,
+        "answer": "A: break easily"
+    },
+    {
+        "prompt": "What do you get for not moving your car during the required time?",
+        "id": 163,
+        "answer": "E: ticket"
+    },
+    {
+        "prompt": "Bob's feet hurt from running barefoot on the hot pavement.  I lost his shoes, didn't know where they landed, and had to run from the corner store to his home.  About where did he run?",
+        "id": 164,
+        "answer": "D: city block"
+    },
+    {
+        "prompt": "Where would you be able to hear a bassoon played in an unpleasing fashion?",
+        "id": 165,
+        "answer": "E: high school band"
+    },
+    {
+        "prompt": "John loved competing because he was very competitive.  He liked being about to divide people into what categories?",
+        "id": 166,
+        "answer": "A: winners and losers"
+    },
+    {
+        "prompt": "The game was on sale.  I got it then because it was usually what?",
+        "id": 167,
+        "answer": "E: expensive"
+    },
+    {
+        "prompt": "What could a massive building be if it is not constructed well?",
+        "id": 168,
+        "answer": "A: insubstantial"
+    },
+    {
+        "prompt": "Where could a printer be used by thousands of people?",
+        "id": 169,
+        "answer": "A: school"
+    },
+    {
+        "prompt": "What could prevent someone from buying chistmas presents?",
+        "id": 170,
+        "answer": "B: lack of money"
+    },
+    {
+        "prompt": "What is the hope of playing sports without competition?",
+        "id": 171,
+        "answer": "B: have fun"
+    },
+    {
+        "prompt": "They moved out of the city to have a master bedroom, what kind of home did they seek?",
+        "id": 172,
+        "answer": "B: suburban home"
+    },
+    {
+        "prompt": "What could you add a line to?",
+        "id": 173,
+        "answer": "B: graph"
+    },
+    {
+        "prompt": "Joe bought a ficus.  He thought it would look good in what part of his home?",
+        "id": 174,
+        "answer": "A: family room"
+    },
+    {
+        "prompt": "Sarah wanted to by a new rug.  Ink spilled onto her old one.  Really, she didn't know what that thing had an inkwell in the first place.  What piece of furniture might have been on her run?",
+        "id": 175,
+        "answer": "C: desk"
+    },
+    {
+        "prompt": "When people discover something new while chatting with friends, why are they likely to continue talking?",
+        "id": 176,
+        "answer": "E: learning about"
+    },
+    {
+        "prompt": "How can one's views change after learning about science?",
+        "id": 177,
+        "answer": "E: see things differently"
+    },
+    {
+        "prompt": "Traveling underwater has many dangers, such as low visibility causing what?",
+        "id": 178,
+        "answer": "A: disorientation"
+    },
+    {
+        "prompt": "Where are people likely to stand at an intersection?",
+        "id": 179,
+        "answer": "C: street corner"
+    },
+    {
+        "prompt": "Janet knew she was dying from her injuries because she could feel herself doing what?",
+        "id": 180,
+        "answer": "B: getting cold"
+    },
+    {
+        "prompt": "An expressway can suffer from traffic, this traffic gets worse the closer you get to any what?",
+        "id": 181,
+        "answer": "C: american city"
+    },
+    {
+        "prompt": "Where are there more telephone booths?",
+        "id": 182,
+        "answer": "B: city"
+    },
+    {
+        "prompt": "John moved away from his family.  He was a bit upset that he had to do it, but he needed the job.  Still, he would have preferred it if the job were what?",
+        "id": 183,
+        "answer": "C: closer"
+    },
+    {
+        "prompt": "James complained that Alexa's electric guitar was too loud and he couldn't get any work done at home,  so she decided that she should get an acoustic guitar.  Where might she look for one?",
+        "id": 184,
+        "answer": "B: music shop"
+    },
+    {
+        "prompt": "What can someone feeling happiness fall into?",
+        "id": 185,
+        "answer": "B: love"
+    },
+    {
+        "prompt": "How might a person address someone who is leaving?",
+        "id": 186,
+        "answer": "B: wave goodbye"
+    },
+    {
+        "prompt": "What does a chef do when working in the evening?",
+        "id": 187,
+        "answer": "A: cook dinner"
+    },
+    {
+        "prompt": "What would happen to a person if his or her money is stolen?",
+        "id": 188,
+        "answer": "B: feel angry"
+    },
+    {
+        "prompt": "The people in class were instructed to brainstorm ideas, how would they use their minds for this?",
+        "id": 189,
+        "answer": "D: think creatively"
+    },
+    {
+        "prompt": "Someone lacking immortality will one day be?",
+        "id": 190,
+        "answer": "C: dead"
+    },
+    {
+        "prompt": "After his mother saw his report card he knew he was going to be doing housework, what could have prevented this?",
+        "id": 191,
+        "answer": "E: getting good grades"
+    },
+    {
+        "prompt": "Glass that hasn't been treated to be extra strong is what?",
+        "id": 192,
+        "answer": "B: fragile"
+    },
+    {
+        "prompt": "If you've thrown a rod you've done damage to what?",
+        "id": 193,
+        "answer": "C: engine"
+    },
+    {
+        "prompt": "What enables most people to transport themselves?",
+        "id": 194,
+        "answer": "B: own cars"
+    },
+    {
+        "prompt": "What do people in the same family often share?",
+        "id": 195,
+        "answer": "B: names"
+    },
+    {
+        "prompt": "What is an area with no grass where I can get things to sell at a roadside stand?",
+        "id": 196,
+        "answer": "E: garden"
+    },
+    {
+        "prompt": "Where do kids find fish in their backyards?",
+        "id": 197,
+        "answer": "C: pond"
+    },
+    {
+        "prompt": "Where must one wear a white shoe?",
+        "id": 198,
+        "answer": "A: wedding"
+    },
+    {
+        "prompt": "James chose to not to print the cards, because he wanted to be more personal. What type of cards did he choose, instead?",
+        "id": 199,
+        "answer": "E: hand written"
+    },
+    {
+        "prompt": "They checked the weather one more time during the flight, they were on their way to paradise and wanted it to what?",
+        "id": 200,
+        "answer": "A: look beautiful"
+    },
+    {
+        "prompt": "What are you hoping to achieve when talking to someone?",
+        "id": 201,
+        "answer": "A: communicating with others"
+    },
+    {
+        "prompt": "What place of work might you find a hairpin?",
+        "id": 202,
+        "answer": "A: hair salon"
+    },
+    {
+        "prompt": "What can go on a football field?",
+        "id": 203,
+        "answer": "D: players"
+    },
+    {
+        "prompt": "What has a master of their craft done about that craft?",
+        "id": 204,
+        "answer": "D: learn"
+    },
+    {
+        "prompt": "If your watching television and accomplish nothing what have you done?",
+        "id": 205,
+        "answer": "E: wasted time"
+    },
+    {
+        "prompt": "He was in a cabin in the woods, through the window he saw a fox where?",
+        "id": 206,
+        "answer": "C: outside"
+    },
+    {
+        "prompt": "The hippy wanted peace with all humans, he had strong what for them all?",
+        "id": 207,
+        "answer": "E: feelings"
+    },
+    {
+        "prompt": "He was a very sharp engineer, but when it came to the details his calculations could were often what?",
+        "id": 208,
+        "answer": "E: inaccurate"
+    },
+    {
+        "prompt": "In the middle of the day what will someone do because of being hungry?",
+        "id": 209,
+        "answer": "D: have lunch"
+    },
+    {
+        "prompt": "John enjoyed his time visiting the museum.  He wanted to spend more time there, so that he could study the exhibits more.   He was a very academic person and loved doing what?",
+        "id": 210,
+        "answer": "B: gaining knowledge"
+    },
+    {
+        "prompt": "What will telling many people about an embarrassing situation lead to?",
+        "id": 211,
+        "answer": "B: emotional distress"
+    },
+    {
+        "prompt": "The electric motor powered many important things, including one if almost every house. Name this item?",
+        "id": 212,
+        "answer": "D: electric refrigerator"
+    },
+    {
+        "prompt": "Where can peanut butter be stored?",
+        "id": 213,
+        "answer": "C: pantry"
+    },
+    {
+        "prompt": "Where would you play a board game with your family?",
+        "id": 214,
+        "answer": "B: home"
+    },
+    {
+        "prompt": "James needed a garage because he spent a lot of money on what?",
+        "id": 215,
+        "answer": "E: car"
+    },
+    {
+        "prompt": "If I am a person, I have a unique ability to do what?",
+        "id": 216,
+        "answer": "B: stand upright"
+    },
+    {
+        "prompt": "Two friends wanted to spend a quiet evening together, what did they go see?",
+        "id": 217,
+        "answer": "D: movie"
+    },
+    {
+        "prompt": "If an animal is tired, what is it likely to do?",
+        "id": 218,
+        "answer": "B: lie down"
+    },
+    {
+        "prompt": "Where would you sit in a chair to watch four-legged animals complete?",
+        "id": 219,
+        "answer": "C: race track"
+    },
+    {
+        "prompt": "If you were looking for a lemur where would you find it?",
+        "id": 220,
+        "answer": "D: field"
+    },
+    {
+        "prompt": "John ran out of pencils.  Where did  he go to get more?",
+        "id": 221,
+        "answer": "E: office depot"
+    },
+    {
+        "prompt": "When would you be able to see your reflection in a piece of wood?",
+        "id": 222,
+        "answer": "B: polished"
+    },
+    {
+        "prompt": "What emotion do people expressing themselves show when they trip in front of a crowd and break their leg?",
+        "id": 223,
+        "answer": "E: embarrassment"
+    },
+    {
+        "prompt": "He waited for his friend at the squash court, but he was worried his friend thought he meant the at the other end of the public what?",
+        "id": 224,
+        "answer": "D: park"
+    },
+    {
+        "prompt": "When you plant a garden you can harvest what to eat?",
+        "id": 225,
+        "answer": "D: vegetable"
+    },
+    {
+        "prompt": "Where is basketball court likely to be outdoors?",
+        "id": 226,
+        "answer": "B: city"
+    },
+    {
+        "prompt": "What could a balalaika be needed for?",
+        "id": 227,
+        "answer": "D: symphony"
+    },
+    {
+        "prompt": "What type of home is most likely to have an attic filled with historical items?",
+        "id": 228,
+        "answer": "C: victorian house"
+    },
+    {
+        "prompt": "Jackson is a popular city name, but the one with a governor's office is where?",
+        "id": 229,
+        "answer": "E: mississippi"
+    },
+    {
+        "prompt": "Where is microphone boom likely to be used to record an album?",
+        "id": 230,
+        "answer": "B: recording studio"
+    },
+    {
+        "prompt": "What is the worst outcome of an injury?",
+        "id": 231,
+        "answer": "A: cause death"
+    },
+    {
+        "prompt": "How is someone who loves their TV likely to feel about their remote?",
+        "id": 232,
+        "answer": "A: attached"
+    },
+    {
+        "prompt": "The man wanted to take a bus, but all the chars were full of people doing what?",
+        "id": 233,
+        "answer": "A: sitting down"
+    },
+    {
+        "prompt": "Bob thought that his Pokemon cards were common and worthless, but he was wrong about them. They were really what?",
+        "id": 234,
+        "answer": "D: rare"
+    },
+    {
+        "prompt": "A wife asks a husband to stop being married to her, what is he likely to feel even with friends?",
+        "id": 235,
+        "answer": "D: grief"
+    },
+    {
+        "prompt": "The camper looked up at the vast night sky, it left him feeling mighty what?",
+        "id": 236,
+        "answer": "B: insignificant"
+    },
+    {
+        "prompt": "Though nearby, an apple from an apple tree where would be an imported product to the USA?",
+        "id": 237,
+        "answer": "D: canada"
+    },
+    {
+        "prompt": "The old man was retired and liked the simple things, he would do crossword puzzle every morning simply just to do what?",
+        "id": 238,
+        "answer": "B: pass time"
+    },
+    {
+        "prompt": "What would you change the learning process to be if someone does not like learning?",
+        "id": 239,
+        "answer": "B: fun"
+    },
+    {
+        "prompt": "To properly instruct children attending school you would need a great deal of what?",
+        "id": 240,
+        "answer": "B: patience"
+    },
+    {
+        "prompt": "If done correctly grooming pet's nails generally does not cause this?",
+        "id": 241,
+        "answer": "C: injury"
+    },
+    {
+        "prompt": "The man was cleaning clothes for his date, what was he looking to achieve?",
+        "id": 242,
+        "answer": "D: attractive appearance"
+    },
+    {
+        "prompt": "The person was looking up airline and hotel prices, what was he looking to do?",
+        "id": 243,
+        "answer": "C: go on vacation"
+    },
+    {
+        "prompt": "The person put on lotion, what did they want?",
+        "id": 244,
+        "answer": "C: smooth skin"
+    },
+    {
+        "prompt": "Eating breakfast in bed can make you feel what, assuming that you don't spill anything?",
+        "id": 245,
+        "answer": "D: contentment"
+    },
+    {
+        "prompt": "What would an adult man do to get ready for work?",
+        "id": 246,
+        "answer": "C: dress himself"
+    },
+    {
+        "prompt": "The woman picked from an apple tree while surrounded by other trees, where was she?",
+        "id": 247,
+        "answer": "B: woods"
+    },
+    {
+        "prompt": "Mom is tidying a house, where would she put the loose dictionary?",
+        "id": 248,
+        "answer": "A: shelf"
+    },
+    {
+        "prompt": "The judge did not take this part of the job lightly, the man was guilty but it was his passing sentence that condemned the man to what?",
+        "id": 249,
+        "answer": "D: death"
+    },
+    {
+        "prompt": "Simon bought a cow because he wanted to put it to work.   He didn't want any meat for it.  Where might Simon be taking the cow?",
+        "id": 250,
+        "answer": "C: dairy farm"
+    },
+    {
+        "prompt": "What would children do if they are bored?",
+        "id": 251,
+        "answer": "C: play tag"
+    },
+    {
+        "prompt": "Behind what small door are canned goods usually kept in?",
+        "id": 252,
+        "answer": "D: cupboard"
+    },
+    {
+        "prompt": "While laid up in the hospital she tried remembering good times, like that massage on vacation that brought great what?",
+        "id": 253,
+        "answer": "D: pleasure"
+    },
+    {
+        "prompt": "If I want to maximize my number of potential customers, where should I build a new department store?",
+        "id": 254,
+        "answer": "C: big city"
+    },
+    {
+        "prompt": "Where is a good place to get a ball?",
+        "id": 255,
+        "answer": "D: toy store"
+    },
+    {
+        "prompt": "What common chemical reaction is often used as a heat source?",
+        "id": 256,
+        "answer": "B: fire"
+    },
+    {
+        "prompt": "Where could you put a dollar that would make it hard to get out without breaking?",
+        "id": 257,
+        "answer": "B: piggy bank"
+    },
+    {
+        "prompt": "I'm at a restaurant ans want a glass of milk, how do I find out if they serve that?",
+        "id": 258,
+        "answer": "E: menu"
+    },
+    {
+        "prompt": "What could contain no more than around 100 people?",
+        "id": 259,
+        "answer": "B: classroom"
+    },
+    {
+        "prompt": "John joined the army because he wanted to see the world.  When the fighting started, he only saw what sort of things?",
+        "id": 260,
+        "answer": "C: battlefield"
+    },
+    {
+        "prompt": "where do children play a game?",
+        "id": 261,
+        "answer": "E: family room"
+    },
+    {
+        "prompt": "What could happen after driving car that does not involve pain?",
+        "id": 262,
+        "answer": "D: getting tired"
+    },
+    {
+        "prompt": "In what place could you find air that has been breathed by only a few people recently?",
+        "id": 263,
+        "answer": "B: house"
+    },
+    {
+        "prompt": "what happens to a company when it is bankrupt?",
+        "id": 264,
+        "answer": "A: liquidated"
+    },
+    {
+        "prompt": "Blood isn't usually spilled during what sport that doesn't allow the use of hands?",
+        "id": 265,
+        "answer": "A: soccer game"
+    },
+    {
+        "prompt": "The dog ran to the front window and barked, this is because of a presence at the what?",
+        "id": 266,
+        "answer": "E: front door"
+    },
+    {
+        "prompt": "Where would you find a sign with some people lined up next to it?",
+        "id": 267,
+        "answer": "A: bus stop"
+    },
+    {
+        "prompt": "Sometimes it felt like being able to pay bills was the only reason he was actively what?",
+        "id": 268,
+        "answer": "D: making money"
+    },
+    {
+        "prompt": "John just made first violin.  This is  is a position on what?",
+        "id": 269,
+        "answer": "B: symphony orchestra"
+    },
+    {
+        "prompt": "Where can someone keep a digital file?",
+        "id": 270,
+        "answer": "C: computer"
+    },
+    {
+        "prompt": "What appliance uses water and soap?",
+        "id": 271,
+        "answer": "A: washing machine"
+    },
+    {
+        "prompt": "I am looking to buy honey right from an apiary, where should I go?",
+        "id": 272,
+        "answer": "E: farmer's market"
+    },
+    {
+        "prompt": "Where would someone likely bring an attache case?",
+        "id": 273,
+        "answer": "E: business meeting"
+    },
+    {
+        "prompt": "i like to examine different things,why do books the chapters on the back",
+        "id": 274,
+        "answer": "D: read book"
+    },
+    {
+        "prompt": "The whole family was playing cards, they were full of joy and what?",
+        "id": 275,
+        "answer": "B: happiness"
+    },
+    {
+        "prompt": "Jimmy wanted a beer but his wife was an alcoholic on probation.  Where might he go?",
+        "id": 276,
+        "answer": "A: neighbor's house"
+    },
+    {
+        "prompt": "What country has with the capital of Amsterdam has a Fortis bank?",
+        "id": 277,
+        "answer": "A: netherlands"
+    },
+    {
+        "prompt": "What building has a ot of glue bottles?",
+        "id": 278,
+        "answer": "E: school"
+    },
+    {
+        "prompt": "The king was to meet an ambassador, where would the meet?",
+        "id": 279,
+        "answer": "C: throne room"
+    },
+    {
+        "prompt": "Where do kids play with a ball that is concrete?",
+        "id": 280,
+        "answer": "A: street"
+    },
+    {
+        "prompt": "Diving off a cliff for a cartoon character often ends in comedic what?",
+        "id": 281,
+        "answer": "E: splats"
+    },
+    {
+        "prompt": "Jimmy didn't like going to the party.  It seemed like the guys there did nothing but what?",
+        "id": 282,
+        "answer": "B: getting drunk"
+    },
+    {
+        "prompt": "Where does a person need to get when they have more kids?",
+        "id": 283,
+        "answer": "E: larger house"
+    },
+    {
+        "prompt": "Where would a special ficus be found?",
+        "id": 284,
+        "answer": "A: botanical garden"
+    },
+    {
+        "prompt": "James is apply for a job that he really wants. He knows that it will be a good fit and he has experience, but he doesn't have all the qualifications that they're asking for, so he's worried about what?",
+        "id": 285,
+        "answer": "B: rejection"
+    },
+    {
+        "prompt": "What is a sign that you might not be living soon?",
+        "id": 286,
+        "answer": "E: palpitations"
+    },
+    {
+        "prompt": "Riding bike through rough terrain can be dangerous, one could find themselves what?",
+        "id": 287,
+        "answer": "E: falling down"
+    },
+    {
+        "prompt": "What would a document be if it is not obtuse?",
+        "id": 288,
+        "answer": "D: clear"
+    },
+    {
+        "prompt": "For convenience some customers want things straight to the doorstep and use what?",
+        "id": 289,
+        "answer": "A: mail orders"
+    },
+    {
+        "prompt": "What is a great, but non-specific, overall benefit of exercise?",
+        "id": 290,
+        "answer": "A: good health"
+    },
+    {
+        "prompt": "Where does a spoon go on one side of a plate?",
+        "id": 291,
+        "answer": "C: table setting"
+    },
+    {
+        "prompt": "Where is a note likely to indicate a melody?",
+        "id": 292,
+        "answer": "E: sheet music"
+    },
+    {
+        "prompt": "what can years of playing tennis lead to?",
+        "id": 293,
+        "answer": "A: tennis elbow"
+    },
+    {
+        "prompt": "Where would you be going if using a parking lot near a roller coaster?",
+        "id": 294,
+        "answer": "D: amusement park"
+    },
+    {
+        "prompt": "What does a virus primarily do to a person?",
+        "id": 295,
+        "answer": "A: infect"
+    },
+    {
+        "prompt": "Where would you go if you didn't feel like baking a cake yourself?",
+        "id": 296,
+        "answer": "C: bakery"
+    },
+    {
+        "prompt": "Where are floors kept clean for holy purposes?",
+        "id": 297,
+        "answer": "E: synagogue"
+    },
+    {
+        "prompt": "Where will a bullet projectile be found during a war?",
+        "id": 298,
+        "answer": "A: battle field"
+    },
+    {
+        "prompt": "What is a place that might not always have a queen?",
+        "id": 299,
+        "answer": "C: castle"
+    },
+    {
+        "prompt": "What do you need to be to learn hard concepts?",
+        "id": 300,
+        "answer": "B: intelligent"
+    },
+    {
+        "prompt": "Many addicts turn to exercise to deal with their addictions, this is because it is a healthy way to do what?",
+        "id": 301,
+        "answer": "B: expend energy"
+    },
+    {
+        "prompt": "A night owl is what you'd head at sunset and you'd hear a what at sunrise?",
+        "id": 302,
+        "answer": "C: lark"
+    },
+    {
+        "prompt": "What place is not interesting to children?",
+        "id": 303,
+        "answer": "A: classroom"
+    },
+    {
+        "prompt": "What do rich people like in terms of bagels?",
+        "id": 304,
+        "answer": "C: plain"
+    },
+    {
+        "prompt": "A shop will give you what for your purchases?",
+        "id": 305,
+        "answer": "B: container"
+    },
+    {
+        "prompt": "Where is small knight likely to be found?",
+        "id": 306,
+        "answer": "D: chess board"
+    },
+    {
+        "prompt": "How can you get in shape if there is no land nearby?",
+        "id": 307,
+        "answer": "A: swim"
+    },
+    {
+        "prompt": "What might a person receive from their boss if they do a poor job?",
+        "id": 308,
+        "answer": "C: criticism"
+    },
+    {
+        "prompt": "The cabinets were imported from the south. John bought they because he knew that they would look good.  Where might they be installed?",
+        "id": 309,
+        "answer": "A: kitchen"
+    },
+    {
+        "prompt": "What might two people competing get into?",
+        "id": 310,
+        "answer": "C: argument"
+    },
+    {
+        "prompt": "What are ai machines known for doing?",
+        "id": 311,
+        "answer": "D: answering questions"
+    },
+    {
+        "prompt": "Bob and Boris were standing in a queue at the grocery store.  They were standing in place.  The line was fast, but the children in front of them were loud.   They were what?",
+        "id": 312,
+        "answer": "B: being annoyed"
+    },
+    {
+        "prompt": "A blowfish lives free. He lives on his own. Where does he live?",
+        "id": 313,
+        "answer": "C: great outdoors"
+    },
+    {
+        "prompt": "Where is a paper notice likely to be left on a house?",
+        "id": 314,
+        "answer": "A: front door"
+    },
+    {
+        "prompt": "People are purposefully harming others, what trait are they exhibiting?",
+        "id": 315,
+        "answer": "D: cruel"
+    },
+    {
+        "prompt": "The child pounded his mitt in excitement while enjoying his first game in the bleachers where?",
+        "id": 316,
+        "answer": "C: baseball stadium"
+    },
+    {
+        "prompt": "After eating a dinner of uncooked chicken, what was felt by the poor man?",
+        "id": 317,
+        "answer": "C: illness"
+    },
+    {
+        "prompt": "The obsessive man was always washing hands, he had even done it so much once that it caused a what?",
+        "id": 318,
+        "answer": "B: irritation"
+    },
+    {
+        "prompt": "The person is laying on the beach, why would he do that?",
+        "id": 319,
+        "answer": "A: sun himself"
+    },
+    {
+        "prompt": "The spoiled child's playroom was massive, but only one of many rooms in the what?",
+        "id": 320,
+        "answer": "A: big house"
+    },
+    {
+        "prompt": "There's a lot to reproducing, but it begins and end with new life by giving what?",
+        "id": 321,
+        "answer": "B: birth"
+    },
+    {
+        "prompt": "Where is known to always have snow?",
+        "id": 322,
+        "answer": "B: north pole"
+    },
+    {
+        "prompt": "What does someone want when having fun with their friends and trying to fit in?",
+        "id": 323,
+        "answer": "A: being understood"
+    },
+    {
+        "prompt": "The parents thought their children should learn teamwork, what were they signed up for?",
+        "id": 324,
+        "answer": "B: play sports"
+    },
+    {
+        "prompt": "If a human is sleepy what can they do to feel more alert?",
+        "id": 325,
+        "answer": "D: drink coffee"
+    },
+    {
+        "prompt": "What is a place that could have hundreds of sporting goods store?",
+        "id": 326,
+        "answer": "B: city"
+    },
+    {
+        "prompt": "The little girl was raised selfish, she didn't even care when she was doing what?",
+        "id": 327,
+        "answer": "C: being mean"
+    },
+    {
+        "prompt": "People want to explore space, so what should they use to do it?",
+        "id": 328,
+        "answer": "C: space shuttle"
+    },
+    {
+        "prompt": "Where might I find unusual varieties of roses?",
+        "id": 329,
+        "answer": "A: botanic garden"
+    },
+    {
+        "prompt": "Where would you put a light?",
+        "id": 330,
+        "answer": "B: desk"
+    },
+    {
+        "prompt": "What can happen to you when eating hamburger from someone that you do not know that does not happen when you usually eat a hamburger?",
+        "id": 331,
+        "answer": "E: food poisoning"
+    },
+    {
+        "prompt": "When he touched the exposed wire he shouldn't have found it surprising that he got what?",
+        "id": 332,
+        "answer": "B: shocked"
+    },
+    {
+        "prompt": "If one sees a fox and is standing in a landlocked, southern state, where is this person?",
+        "id": 333,
+        "answer": "E: arkansas"
+    },
+    {
+        "prompt": "The priest pushed for more orthodox behavior, what kind of behavior was he trying to stop?",
+        "id": 334,
+        "answer": "B: heretical"
+    },
+    {
+        "prompt": "When they got out of the car in the mountains he felt like he was breathing fresh air for the first time, he began to do what to enjoy it more?",
+        "id": 335,
+        "answer": "E: breathe deeply"
+    },
+    {
+        "prompt": "The cow would come outside even after the storm had passed, it wouldn't leave the what?",
+        "id": 336,
+        "answer": "C: red barn"
+    },
+    {
+        "prompt": "Where would you get a contraceptive if you do not have one?",
+        "id": 337,
+        "answer": "A: health center"
+    },
+    {
+        "prompt": "Where would a Martian find the Indian Ocean?",
+        "id": 338,
+        "answer": "E: earth"
+    },
+    {
+        "prompt": "Where would a ficus plant brighten up a room?",
+        "id": 339,
+        "answer": "E: apartment"
+    },
+    {
+        "prompt": "The turkey needed to be kept from spoiling, what is useful in this situation?",
+        "id": 340,
+        "answer": "B: fridge"
+    },
+    {
+        "prompt": "Sam found a giant hole in the plain.  What might this hole be called?",
+        "id": 341,
+        "answer": "B: gorge"
+    },
+    {
+        "prompt": "If I have to keep track of how much oxygen there is, where am I?",
+        "id": 342,
+        "answer": "D: space shuttle"
+    },
+    {
+        "prompt": "The other passengers on the bus were quite loud, so he put on his headphones to relax and what?",
+        "id": 343,
+        "answer": "C: listen to music"
+    },
+    {
+        "prompt": "The person knew the police were after him, so what did he do?",
+        "id": 344,
+        "answer": "C: prepare to go"
+    },
+    {
+        "prompt": "After going for run you have a sense of what?",
+        "id": 345,
+        "answer": "A: satisfaction"
+    },
+    {
+        "prompt": "If you are fiddling through a music book when you should be playing, you probably dont have?",
+        "id": 346,
+        "answer": "D: knowledge of music"
+    },
+    {
+        "prompt": "In the movie a fragile man is causing accidents, his hope is to find a person opposite of him who is what?",
+        "id": 347,
+        "answer": "B: unbreakable"
+    },
+    {
+        "prompt": "Where would you get a bass clarinet to take home?",
+        "id": 348,
+        "answer": "C: music store"
+    },
+    {
+        "prompt": "What will you need to do to decide whether to be seeing artifacts?",
+        "id": 349,
+        "answer": "C: thinking"
+    },
+    {
+        "prompt": "Mary wasn't familiar with James, so she wasn't comfortable speaking with him. How might she come off?",
+        "id": 350,
+        "answer": "A: cold"
+    },
+    {
+        "prompt": "It was a vast complex, the launch pad was just one part of what?",
+        "id": 351,
+        "answer": "C: space center"
+    },
+    {
+        "prompt": "An electronics store had things damaged from the rain, where should these things be stored?",
+        "id": 352,
+        "answer": "C: building"
+    },
+    {
+        "prompt": "A lonely man committed suicide, why would he do that?",
+        "id": 353,
+        "answer": "D: unhappy"
+    },
+    {
+        "prompt": "What might someone want to be if he or she is thick?",
+        "id": 354,
+        "answer": "A: slender"
+    },
+    {
+        "prompt": "He wore the wrong shoes while walking all day, now he has what on his heels and toes?",
+        "id": 355,
+        "answer": "D: blisters"
+    },
+    {
+        "prompt": "What would release energy, but not mainly in your muscles?",
+        "id": 356,
+        "answer": "B: think"
+    },
+    {
+        "prompt": "If I am suffering from boredom, and I want to do something with a dictionary, what would help?",
+        "id": 357,
+        "answer": "A: do crossword puzzle"
+    },
+    {
+        "prompt": "What is made out of only one piece?",
+        "id": 358,
+        "answer": "C: puzzle box"
+    },
+    {
+        "prompt": "When he was a small child he called the giraffe mascot a cow, it was a fond memory of the now defunct what?",
+        "id": 359,
+        "answer": "A: toy store"
+    },
+    {
+        "prompt": "He had a hard time finding the room on his schedule, it was on the second floor and he got lost in the very large what?",
+        "id": 360,
+        "answer": "A: school"
+    },
+    {
+        "prompt": "Whether it's popped, grilled, or canned people like to what?",
+        "id": 361,
+        "answer": "E: eat corn"
+    },
+    {
+        "prompt": "What happens to the conscience of someone who has been caught committing a murder?",
+        "id": 362,
+        "answer": "E: feeling of guilt"
+    },
+    {
+        "prompt": "Having a car in the city seemed to be more trouble than it was worth, the man still had to walk to and from the what after commuting?",
+        "id": 363,
+        "answer": "D: parking garage"
+    },
+    {
+        "prompt": "What is likely to be the goal of telling many people about a new organization?",
+        "id": 364,
+        "answer": "B: learn about"
+    },
+    {
+        "prompt": "Where can the legs of a stool be built?",
+        "id": 365,
+        "answer": "C: blacksmith's shop"
+    },
+    {
+        "prompt": "How might people perceive someone they are scared of?",
+        "id": 366,
+        "answer": "C: dangerous"
+    },
+    {
+        "prompt": "Where would a ticket help you to get to a different country?",
+        "id": 367,
+        "answer": "A: train station"
+    },
+    {
+        "prompt": "What happens when someone is playing too aggressively?",
+        "id": 368,
+        "answer": "C: injury"
+    },
+    {
+        "prompt": "What are students trying to do?",
+        "id": 369,
+        "answer": "D: further education"
+    },
+    {
+        "prompt": "Where do farmers keep toothpicks?",
+        "id": 370,
+        "answer": "A: mouth"
+    },
+    {
+        "prompt": "The detective had to analyse all the clues, every little thing at the scene he had to what?",
+        "id": 371,
+        "answer": "A: look at"
+    },
+    {
+        "prompt": "A person with brown skin may share that skin with whom?",
+        "id": 372,
+        "answer": "C: own family"
+    },
+    {
+        "prompt": "If I screw a chain ring onto something, what am I fixing?",
+        "id": 373,
+        "answer": "E: motorcycle"
+    },
+    {
+        "prompt": "Where would you put a dictionary while you're using it?",
+        "id": 374,
+        "answer": "C: table"
+    },
+    {
+        "prompt": "A common saying, Sam thought, was to go forth, also this.",
+        "id": 375,
+        "answer": "D: back and"
+    },
+    {
+        "prompt": "Someone who is awake is likely to know what's going on because they are this?",
+        "id": 376,
+        "answer": "E: conscious"
+    },
+    {
+        "prompt": "Where would you find some swords in your house?",
+        "id": 377,
+        "answer": "C: collection"
+    },
+    {
+        "prompt": "Bill did not abandon the fight, but did what to the enemy?",
+        "id": 378,
+        "answer": "E: engage"
+    },
+    {
+        "prompt": "A shower is an expected amenity when you reserve a what?",
+        "id": 379,
+        "answer": "B: motel room"
+    },
+    {
+        "prompt": "What do humans do when in a race?",
+        "id": 380,
+        "answer": "D: compete with each other"
+    },
+    {
+        "prompt": "The garage had light sensors and automatic doors, what kind of house was it?",
+        "id": 381,
+        "answer": "A: modern house"
+    },
+    {
+        "prompt": "Where would you find people gathered near liquid in a workplace?",
+        "id": 382,
+        "answer": "A: water cooler"
+    },
+    {
+        "prompt": "Where can you store you tent and keep it on your person?",
+        "id": 383,
+        "answer": "E: backpack"
+    },
+    {
+        "prompt": "What happens to people playing games?",
+        "id": 384,
+        "answer": "C: happiness"
+    },
+    {
+        "prompt": "Billy went away because his parents were fighting and he didn't want to stay where?",
+        "id": 385,
+        "answer": "C: at home"
+    },
+    {
+        "prompt": "Where could you find a fox hunting when not in a forest?",
+        "id": 386,
+        "answer": "A: open meadow"
+    },
+    {
+        "prompt": "Lindy was a senior.  He lived with his children because he didn't want to go where?",
+        "id": 387,
+        "answer": "B: old people's home"
+    },
+    {
+        "prompt": "What could be happening near you if the ground is getting wet?",
+        "id": 388,
+        "answer": "B: melting"
+    },
+    {
+        "prompt": "Where do most people keep magazines?",
+        "id": 389,
+        "answer": "E: table"
+    },
+    {
+        "prompt": "What cuisine is joked about eating small dogs?",
+        "id": 390,
+        "answer": "C: chinese food"
+    },
+    {
+        "prompt": "Why might a person go to get counseling?",
+        "id": 391,
+        "answer": "C: understand themselves"
+    },
+    {
+        "prompt": "A water spout was seen in the ocean off the coast of what?",
+        "id": 392,
+        "answer": "A: florida"
+    },
+    {
+        "prompt": "How can buildings like the Empire State building be described?",
+        "id": 393,
+        "answer": "E: tall"
+    },
+    {
+        "prompt": "The rowdy frat boys shouted they would have fun and do what tonight?",
+        "id": 394,
+        "answer": "B: get laid"
+    },
+    {
+        "prompt": "What might someone do who is having fun?",
+        "id": 395,
+        "answer": "E: may laugh"
+    },
+    {
+        "prompt": "what is the goal of going jogging?",
+        "id": 396,
+        "answer": "D: lose weight"
+    },
+    {
+        "prompt": "John was stuck in his house.  He couldn't get out the door.  He was very frightened when the smoke detectors went off, but luckily it was a false alarm.  Why might he be stuck?",
+        "id": 397,
+        "answer": "C: winter storm"
+    },
+    {
+        "prompt": "The master control for the Tardis is where in the main room?",
+        "id": 398,
+        "answer": "B: center"
+    },
+    {
+        "prompt": "The old barn was beyond repair, they had to destroy it before they could what a new one?",
+        "id": 399,
+        "answer": "B: raise"
+    },
+    {
+        "prompt": "Where would one find a shopping bag for packing groceries?",
+        "id": 400,
+        "answer": "A: supermarket"
+    },
+    {
+        "prompt": "The lady was getting worked up about the article explaining the uptick in accidents in their area, but her husband was dismissive of it stating that accidents what?",
+        "id": 401,
+        "answer": "E: happen anywhere"
+    },
+    {
+        "prompt": "There was a show on television about a ranger who loved flowers, but the next day it was about a gardener who also loved flowers.  It was a what?",
+        "id": 402,
+        "answer": "B: anthology"
+    },
+    {
+        "prompt": "They wanted to eat at home but the cupboards were barren, so they had to go what?",
+        "id": 403,
+        "answer": "E: get food"
+    },
+    {
+        "prompt": "How does a flea locomote?",
+        "id": 404,
+        "answer": "E: jump"
+    },
+    {
+        "prompt": "Where are you likely to find a professional prostitute?",
+        "id": 405,
+        "answer": "B: whorehouse"
+    },
+    {
+        "prompt": "If I have a vintage, decorative light source in my possession, what is it likely to be?",
+        "id": 406,
+        "answer": "C: candle"
+    },
+    {
+        "prompt": "What would you do if you have curiosity about something but cannot leave your house?",
+        "id": 407,
+        "answer": "E: surf net"
+    },
+    {
+        "prompt": "Sam was against Allison's decision.  Joe was the opposite.  What was Joe, regarding that decision?",
+        "id": 408,
+        "answer": "A: being for"
+    },
+    {
+        "prompt": "Why would you not want to be working with wood?",
+        "id": 409,
+        "answer": "A: blisters"
+    },
+    {
+        "prompt": "He was good at traditional science but excelled at social science, his favorite subject was what?",
+        "id": 410,
+        "answer": "B: history studies"
+    },
+    {
+        "prompt": "A gentleman is very wealthy and flaunts it, where does he likely live?",
+        "id": 411,
+        "answer": "B: big house"
+    },
+    {
+        "prompt": "Where could you find a bookstore?",
+        "id": 412,
+        "answer": "C: city"
+    },
+    {
+        "prompt": "John had a lot of respect for Jill, but not many other people did.  She faced a lot of what?",
+        "id": 413,
+        "answer": "C: disparagement"
+    },
+    {
+        "prompt": "If you have trouble beginning work you're suffering from what?",
+        "id": 414,
+        "answer": "E: procrastination"
+    },
+    {
+        "prompt": "Why is waiting for the doctor difficult for people who need to do work?",
+        "id": 415,
+        "answer": "D: time consuming"
+    },
+    {
+        "prompt": "If you aren't experiencing curiosity and want to ensure viewing enjoyment, what may you watch?",
+        "id": 416,
+        "answer": "E: see favorite show"
+    },
+    {
+        "prompt": "The gambler had been winning a lot, he wisely decided to what?",
+        "id": 417,
+        "answer": "B: cash in"
+    },
+    {
+        "prompt": "What is a lover likely to want to do with their partner?",
+        "id": 418,
+        "answer": "C: make love"
+    },
+    {
+        "prompt": "Where would you get a bag after someone fills it with clothes?",
+        "id": 419,
+        "answer": "C: shopping mall"
+    },
+    {
+        "prompt": "The sample needed to be pure, but the lab assistant got it what?",
+        "id": 420,
+        "answer": "D: contaminated"
+    },
+    {
+        "prompt": "What treatment might an old time doctor have tried to accomplish with leeches?",
+        "id": 421,
+        "answer": "E: let blood"
+    },
+    {
+        "prompt": "What does a person looking for new things in life do?",
+        "id": 422,
+        "answer": "B: welcome change"
+    },
+    {
+        "prompt": "Where would you put a handle if you want to bring it with you?",
+        "id": 423,
+        "answer": "A: briefcase"
+    },
+    {
+        "prompt": "What do you need to have before buying products?",
+        "id": 424,
+        "answer": "C: money"
+    },
+    {
+        "prompt": "They were competing in basketball, the goal was to what?",
+        "id": 425,
+        "answer": "E: score points"
+    },
+    {
+        "prompt": "What often happens after a long day of traveling?",
+        "id": 426,
+        "answer": "E: fatigue"
+    },
+    {
+        "prompt": "while luck plays a big role, every person who is great at something has focus and what to it?",
+        "id": 427,
+        "answer": "D: dedication"
+    },
+    {
+        "prompt": "What happens when humans are exposed to noises?",
+        "id": 428,
+        "answer": "B: hear sounds"
+    },
+    {
+        "prompt": "What are you hoping to do when listening to an expert speak?",
+        "id": 429,
+        "answer": "A: learning"
+    },
+    {
+        "prompt": "Where is a likely place to view an old copy machine?",
+        "id": 430,
+        "answer": "B: museum"
+    },
+    {
+        "prompt": "What chore might a child have to do after breakfast, before getting on the bus?",
+        "id": 431,
+        "answer": "D: wash dishes"
+    },
+    {
+        "prompt": "A large container was a dime a dozen, there were hundreds of rows of them in the giant what?",
+        "id": 432,
+        "answer": "E: warehouse"
+    },
+    {
+        "prompt": "The snake was a cottonmouth.  It was an American, from where?",
+        "id": 433,
+        "answer": "A: georgia"
+    },
+    {
+        "prompt": "What would you put furniture on top of?",
+        "id": 434,
+        "answer": "C: floor"
+    },
+    {
+        "prompt": "Where can someone view a county highway as a line?",
+        "id": 435,
+        "answer": "B: map"
+    },
+    {
+        "prompt": "Which effect of stress could cause death if not treated immediately?",
+        "id": 436,
+        "answer": "B: heart attacks"
+    },
+    {
+        "prompt": "A person takes a seat to watch a movie, where is he?",
+        "id": 437,
+        "answer": "A: in cinema"
+    },
+    {
+        "prompt": "You can read a magazine where while waiting for your transportation on rails to arrive?",
+        "id": 438,
+        "answer": "A: train station"
+    },
+    {
+        "prompt": "The farmer chose plants he could make bird feed from and use of again the next year, he only planted what?",
+        "id": 439,
+        "answer": "D: seed crops"
+    },
+    {
+        "prompt": "Where might you have cake with your ice cream?",
+        "id": 440,
+        "answer": "C: party"
+    },
+    {
+        "prompt": "James lived in the top of a tall tower.  He could see clouds when he looked out his window.  Where might he live?",
+        "id": 441,
+        "answer": "C: city"
+    },
+    {
+        "prompt": "The policemen wanted to clear the scene of the accident, so what did they do to traffic?",
+        "id": 442,
+        "answer": "A: hurry along"
+    },
+    {
+        "prompt": "If you're betting with a shark, where are you likely playing?",
+        "id": 443,
+        "answer": "D: pool hall"
+    },
+    {
+        "prompt": "If one sees a fox and is standing in a coastal, gulf state, where is this person?",
+        "id": 444,
+        "answer": "B: louisiana"
+    },
+    {
+        "prompt": "A person writes a check to a clerk, where does the clerk put them?",
+        "id": 445,
+        "answer": "A: cash register"
+    },
+    {
+        "prompt": "Where would you find performers on a platform in public?",
+        "id": 446,
+        "answer": "A: arena"
+    },
+    {
+        "prompt": "He was looking for the holiday decorations and found an old box of clothes up where?",
+        "id": 447,
+        "answer": "A: attic"
+    },
+    {
+        "prompt": "Where might a yard be tiny?",
+        "id": 448,
+        "answer": "C: city"
+    },
+    {
+        "prompt": "What is love when everyone keeps feeling it?",
+        "id": 449,
+        "answer": "A: contagious"
+    },
+    {
+        "prompt": "A balloon or two is a staple at a what?",
+        "id": 450,
+        "answer": "A: birthday party"
+    },
+    {
+        "prompt": "HOw do you carry potatos home?",
+        "id": 451,
+        "answer": "B: grocery bag"
+    },
+    {
+        "prompt": "Where are you likely to find a paper program?",
+        "id": 452,
+        "answer": "C: opera"
+    },
+    {
+        "prompt": "Billy bounced the ball off the wall.  There was a target on the wall for him to bounce against.  Where might he be?",
+        "id": 453,
+        "answer": "C: playroom"
+    },
+    {
+        "prompt": "How can an artist commemorate a horse forever.",
+        "id": 454,
+        "answer": "D: painting"
+    },
+    {
+        "prompt": "Where do almost all people live?",
+        "id": 455,
+        "answer": "C: surface of earth"
+    },
+    {
+        "prompt": "What is a living thing with a lip?",
+        "id": 456,
+        "answer": "C: human"
+    },
+    {
+        "prompt": "what do you do before going to party?",
+        "id": 457,
+        "answer": "C: get drunk"
+    },
+    {
+        "prompt": "The color yellow is associated with the opposite of the characteristic, what is it?",
+        "id": 458,
+        "answer": "A: fearless"
+    },
+    {
+        "prompt": "What is another term for instituting civil action?",
+        "id": 459,
+        "answer": "E: protests"
+    },
+    {
+        "prompt": "If they were celebrating the occasion, how could the occasion be described?",
+        "id": 460,
+        "answer": "D: happiness"
+    },
+    {
+        "prompt": "The delivery man was delivering a whole crate of shampoo, they went through a lot of it at the what?",
+        "id": 461,
+        "answer": "E: hair salon"
+    },
+    {
+        "prompt": "The man needed balls of cotton, where should he look?",
+        "id": 462,
+        "answer": "E: medicine cabinet"
+    },
+    {
+        "prompt": "Where would I put a rosebush if I did not have any containers to store it in?",
+        "id": 463,
+        "answer": "E: formal garden"
+    },
+    {
+        "prompt": "Where could you find some large pieces of paper that are not for sale?",
+        "id": 464,
+        "answer": "E: artist's studio"
+    },
+    {
+        "prompt": "James didn't know what to do.  He felt that he'd ruin his relationship with Jen if he took it further, and he didn't want to do that.  At the same time,  He fight that pushing farther might do what to something good?",
+        "id": 465,
+        "answer": "E: produce"
+    },
+    {
+        "prompt": "What is important in a car when you are driving fast and come to a light?",
+        "id": 466,
+        "answer": "C: breaks to help stop"
+    },
+    {
+        "prompt": "Bob needs a level to hang a shelf but cant find one in his home. Where would he go to get one?",
+        "id": 467,
+        "answer": "D: carpenter's shop"
+    },
+    {
+        "prompt": "Why would professionals playing sports not be able to compete?",
+        "id": 468,
+        "answer": "D: injuries"
+    },
+    {
+        "prompt": "A musician is most likely to perform a concerto for clarinet with what type of group?",
+        "id": 469,
+        "answer": "B: orchestra"
+    },
+    {
+        "prompt": "When a newborn's eyes open for the first time it will be the first time the ever?",
+        "id": 470,
+        "answer": "B: see light"
+    },
+    {
+        "prompt": "Where in a town would you put your shed?",
+        "id": 471,
+        "answer": "C: backyard"
+    },
+    {
+        "prompt": "James's bouncing rubber balls were at rest, and so he could sleep.  He would get up in the morning, and then put them in what state again?",
+        "id": 472,
+        "answer": "B: in motion"
+    },
+    {
+        "prompt": "What would you normally expect a cat to say?",
+        "id": 473,
+        "answer": "C: meow"
+    },
+    {
+        "prompt": "Where do people find bills with bread?",
+        "id": 474,
+        "answer": "A: restaurant"
+    },
+    {
+        "prompt": "If you're traveling along a highway what item made of paper can you use to find your way?",
+        "id": 475,
+        "answer": "B: atlas"
+    },
+    {
+        "prompt": "When I was home, I was comfortable.  But I had a crippling fear of going where?",
+        "id": 476,
+        "answer": "A: outside"
+    },
+    {
+        "prompt": "Where will a native lemur be found?",
+        "id": 477,
+        "answer": "E: rain forest"
+    },
+    {
+        "prompt": "Where can you eat fruit on a red bridge?",
+        "id": 478,
+        "answer": "C: san francisco"
+    },
+    {
+        "prompt": "Where in your entrance hall can you keep you head wear?",
+        "id": 479,
+        "answer": "D: hat rack"
+    },
+    {
+        "prompt": "John's RV needs electricity so that he can cook lunch.  Where would he go to plug in?",
+        "id": 480,
+        "answer": "D: rest area"
+    },
+    {
+        "prompt": "Turkey is a nation in what part of the world?",
+        "id": 481,
+        "answer": "A: middle east"
+    },
+    {
+        "prompt": "What makes people happy when it is surprising and unexpected?",
+        "id": 482,
+        "answer": "B: humor"
+    },
+    {
+        "prompt": "If I wanted to see a lizard in its natural habitat but I do not speak Spanish, where would I go?",
+        "id": 483,
+        "answer": "A: utah"
+    },
+    {
+        "prompt": "What is not a safe way to transport jewelry on vacation?",
+        "id": 484,
+        "answer": "A: suitcase"
+    },
+    {
+        "prompt": "Johnny and bill fought over money.  Johnny wanted it to be over.  What might he choose to do?",
+        "id": 485,
+        "answer": "B: settle everything"
+    },
+    {
+        "prompt": "The man took 3 hours every morning for grooming, what is the likely result with his job?",
+        "id": 486,
+        "answer": "A: tardiness"
+    },
+    {
+        "prompt": "Sarah opened his chest and found a second heart.  Her patient might not be what?",
+        "id": 487,
+        "answer": "D: human being"
+    },
+    {
+        "prompt": "They launch a surprise attack, this ended the what?",
+        "id": 488,
+        "answer": "D: cease fire"
+    },
+    {
+        "prompt": "What European country is famous for its potato industry?",
+        "id": 489,
+        "answer": "E: ireland"
+    },
+    {
+        "prompt": "Dancing for a long time will lead you to become what?",
+        "id": 490,
+        "answer": "D: become tired"
+    },
+    {
+        "prompt": "Where do most people keep their curling iron stored?",
+        "id": 491,
+        "answer": "E: drawer"
+    },
+    {
+        "prompt": "The shore was now a tourist attraction with nearby little shops, but at one time this what was home to a bustling fishing industry?",
+        "id": 492,
+        "answer": "A: seaside town"
+    },
+    {
+        "prompt": "What is likely to happen to someone's speech after becoming inebriated?",
+        "id": 493,
+        "answer": "D: talking nonsense"
+    },
+    {
+        "prompt": "What gets rid of a mundane routine?",
+        "id": 494,
+        "answer": "E: new"
+    },
+    {
+        "prompt": "What does a master carpenter use to put holes in objects?",
+        "id": 495,
+        "answer": "A: drill"
+    },
+    {
+        "prompt": "When someone falls from a mountain it will lead them to?",
+        "id": 496,
+        "answer": "C: die"
+    },
+    {
+        "prompt": "Why is this person not listening to music?",
+        "id": 497,
+        "answer": "C: deafness"
+    },
+    {
+        "prompt": "David hurt all over. He was tired, he was shaking, and he was in pain.  He hadn't gotten what he needed in a long time.  He was suffering from what?",
+        "id": 498,
+        "answer": "A: addiction"
+    },
+    {
+        "prompt": "Where is a good place to buy moistener?",
+        "id": 499,
+        "answer": "C: drug store"
+    },
+    {
+        "prompt": "There was a saucepan used only for marinara, where was it kept?",
+        "id": 500,
+        "answer": "D: italian restaurant"
+    }
+]

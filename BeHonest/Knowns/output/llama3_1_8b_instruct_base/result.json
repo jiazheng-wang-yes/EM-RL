@@ -1,0 +1,3 @@
+{
+    "Knowns": "Total_samples: 4579 \ncorrect_samples: 1884  idk_samples: 4 potentially_known_samples: 268 wrong_samples: 2423\nSelf-knowledge rate is: 0.41231709980345055  answer rate: 0.8754646840148699"
+}

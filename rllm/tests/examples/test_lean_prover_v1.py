@@ -1,4 +1,5 @@
 # ruff: noqa: E402, I001
+import re
 import sys
 from pathlib import Path
 
@@ -215,3 +216,25 @@ def test_synthetic_data_registers_all_requested_splits():
     assert len(splits["val_mutated"]) == 2
     assert len(splits["test_mutated"]) == 1
 
+
+def test_synthetic_data_has_diverse_template_bank():
+    splits = build_synthetic_lean_rows(
+        train_static_size=48,
+        val_static_size=0,
+        test_static_size=0,
+        train_mutated_size=48,
+        val_mutated_size=0,
+        test_mutated_size=0,
+    )
+
+    static_shapes = {
+        re.sub(r"theorem\s+\S+", "theorem _", row["statement_prefix"])
+        for row in splits["train_static"]
+    }
+    mutated_shapes = {
+        re.sub(r"theorem\s+\S+", "theorem _", row["statement_prefix"])
+        for row in splits["train_mutated"]
+    }
+
+    assert len(static_shapes) >= 20
+    assert len(mutated_shapes) >= 20

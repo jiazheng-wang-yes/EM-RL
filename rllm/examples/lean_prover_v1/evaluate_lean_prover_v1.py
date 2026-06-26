@@ -146,10 +146,28 @@ def main() -> None:
     parser.add_argument("--lean-cwd", default=None)
     parser.add_argument("--timeout-seconds", type=float, default=None)
     parser.add_argument("--register-data", action="store_true", help="Register synthetic or configured Lean data before loading.")
+    parser.add_argument("--train-static-size", type=int, default=None)
+    parser.add_argument("--val-static-size", type=int, default=None)
+    parser.add_argument("--test-static-size", type=int, default=None)
+    parser.add_argument("--train-mutated-size", type=int, default=None)
+    parser.add_argument("--val-mutated-size", type=int, default=None)
+    parser.add_argument("--test-mutated-size", type=int, default=None)
     args = parser.parse_args()
 
     if args.register_data or not DatasetRegistry.dataset_exists(DATASET_NAME, args.split):
-        register_lean_prover_v1_data()
+        data_kwargs = {
+            key: value
+            for key, value in {
+                "train_static_size": args.train_static_size,
+                "val_static_size": args.val_static_size,
+                "test_static_size": args.test_static_size,
+                "train_mutated_size": args.train_mutated_size,
+                "val_mutated_size": args.val_mutated_size,
+                "test_mutated_size": args.test_mutated_size,
+            }.items()
+            if value is not None
+        }
+        register_lean_prover_v1_data(**data_kwargs)
 
     dataset = DatasetRegistry.load_dataset(DATASET_NAME, args.split)
     if dataset is None:

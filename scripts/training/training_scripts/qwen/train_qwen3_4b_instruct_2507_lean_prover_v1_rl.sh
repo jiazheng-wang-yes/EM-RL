@@ -44,6 +44,7 @@ ROLLOUT_TOP_P="${ROLLOUT_TOP_P:-0.95}"
 VAL_ROLLOUT_N="${VAL_ROLLOUT_N:-1}"
 VAL_ROLLOUT_TEMPERATURE="${VAL_ROLLOUT_TEMPERATURE:-0.2}"
 VAL_ROLLOUT_TOP_P="${VAL_ROLLOUT_TOP_P:-0.95}"
+UPDATE_WEIGHTS_BUCKET_MEGABYTES="${UPDATE_WEIGHTS_BUCKET_MEGABYTES:-2048}"
 TRAINER_N_GPUS_PER_NODE="${TRAINER_N_GPUS_PER_NODE:-4}"
 SAVE_FREQ="${SAVE_FREQ:-16}"
 TEST_FREQ="${TEST_FREQ:--1}"
@@ -158,6 +159,7 @@ cd "${RLLM_ROOT}"
   actor_rollout_ref.rollout.n="${ROLLOUT_N}" \
   actor_rollout_ref.rollout.temperature="${ROLLOUT_TEMPERATURE}" \
   actor_rollout_ref.rollout.top_p="${ROLLOUT_TOP_P}" \
+  actor_rollout_ref.rollout.checkpoint_engine.update_weights_bucket_megabytes="${UPDATE_WEIGHTS_BUCKET_MEGABYTES}" \
   actor_rollout_ref.rollout.val_kwargs.n="${VAL_ROLLOUT_N}" \
   actor_rollout_ref.rollout.val_kwargs.temperature="${VAL_ROLLOUT_TEMPERATURE}" \
   actor_rollout_ref.rollout.val_kwargs.top_p="${VAL_ROLLOUT_TOP_P}" \
@@ -196,6 +198,12 @@ case "${RUN_EVAL_AFTER}" in
       --max-k 1
       --register-data
       --timeout-seconds "${LEAN_PROVER_V1_TIMEOUT_SECONDS}"
+      --train-static-size "${LEAN_PROVER_V1_TRAIN_STATIC_SIZE}"
+      --val-static-size "${LEAN_PROVER_V1_VAL_STATIC_SIZE}"
+      --test-static-size "${LEAN_PROVER_V1_TEST_STATIC_SIZE}"
+      --train-mutated-size "${LEAN_PROVER_V1_TRAIN_MUTATED_SIZE}"
+      --val-mutated-size "${LEAN_PROVER_V1_VAL_MUTATED_SIZE}"
+      --test-mutated-size "${LEAN_PROVER_V1_TEST_MUTATED_SIZE}"
     )
     if [[ -n "${LEAN_PROVER_V1_LEAN_COMMAND:-}" ]]; then
       EVAL_ARGS+=(--lean-command "${LEAN_PROVER_V1_LEAN_COMMAND}")

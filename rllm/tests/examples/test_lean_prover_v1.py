@@ -1,7 +1,11 @@
 # ruff: noqa: E402, I001
+import importlib.util
+import json
 import re
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -11,12 +15,24 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from examples.lean_prover_v1.lean_worker import render_lean_source, verify_lean_proof
+from examples.lean_prover_v1.evaluate_lean_prover_v1 import evaluate_rows
 from examples.lean_prover_v1.probe_common import (
     build_synthetic_lean_rows,
     filter_mutation_candidate,
     normalize_lean_row,
     validate_split_integrity,
 )
+
+_SUMMARY_SPEC = importlib.util.spec_from_file_location(
+    "summarize_lm_eval_pair",
+    PROJECT_ROOT / "scripts/capability/summarize_lm_eval_pair.py",
+)
+assert _SUMMARY_SPEC is not None
+_SUMMARY_MODULE = importlib.util.module_from_spec(_SUMMARY_SPEC)
+assert _SUMMARY_SPEC.loader is not None
+sys.modules[_SUMMARY_SPEC.name] = _SUMMARY_MODULE
+_SUMMARY_SPEC.loader.exec_module(_SUMMARY_MODULE)
+summarize_run = _SUMMARY_MODULE.summarize_run
 
 
 def _fake_lean(tmp_path: Path) -> Path:
@@ -120,6 +136,23 @@ def test_sorry_is_rejected_before_lean_runs(tmp_path):
     assert result.status == "forbidden_token"
 
 
+def test_evaluator_logs_code_fence_and_leading_by_without_rejecting(tmp_path):
+    rows = [_row(split="val_static")]
+    report = evaluate_rows(
+        rows,
+        response_map={rows[0]["id"]: ["```lean\nexact True.intro\n```", "by exact True.intro"]},
+        lean_command=str(_fake_lean(tmp_path)),
+        lean_cwd=tmp_path,
+        max_k=2,
+    )
+
+    assert report["pass_at_1"] == 1.0
+    assert report["pass_at_2"] == 1.0
+    assert report["formatting"]["code_fence_count"] == 1
+    assert report["formatting"]["leading_by_count"] == 1
+    assert report["formatting"]["policy"] == "code_fences_are_stripped_and_logged"
+
+
 def test_mutation_filter_rejects_bad_candidates_and_accepts_hard_valid_candidate():
     seed = _row("theorem seed_eq : 1 = 1 := by")
     base = {
@@ -161,6 +194,21 @@ def test_mutation_filter_rejects_bad_candidates_and_accepts_hard_valid_candidate
             "proof_certificate": {"proof_body": "rfl"},
         }
     )
+    missing_baseline = normalize_lean_row(
+        {
+            **base,
+            "statement_prefix": "theorem missing_baseline_candidate (p q : Prop) (hp : p) (hq : q) : q ∧ p := by",
+            "proof_certificate": {"strong_prover_solved": True, "proof_body": "exact And.intro hq hp"},
+        }
+    )
+    proof_body_only = normalize_lean_row(
+        {
+            **base,
+            "statement_prefix": "theorem proof_body_only_candidate (p q : Prop) (hp : p) (hq : q) : q ∧ p := by",
+            "baseline_results": {"well_formed": True, "cheap_baseline_solved": False, "ast_edit_distance": 0.4},
+            "proof_certificate": {"proof_body": "exact And.intro hq hp"},
+        }
+    )
     accepted = normalize_lean_row(
         {
             **base,
@@ -175,6 +223,8 @@ def test_mutation_filter_rejects_bad_candidates_and_accepts_hard_valid_candidate
     assert filter_mutation_candidate(seed, uncompilable).reason == "uncompilable"
     assert filter_mutation_candidate(seed, unproved).reason == "missing_proof_certificate"
     assert filter_mutation_candidate(seed, cheap).reason == "cheap_solved"
+    assert filter_mutation_candidate(seed, missing_baseline).reason == "missing_baseline_results"
+    assert filter_mutation_candidate(seed, proof_body_only).reason == "missing_proof_certificate"
     assert filter_mutation_candidate(seed, accepted).accepted is True
 
 
@@ -219,10 +269,10 @@ def test_synthetic_data_registers_all_requested_splits():
 
 def test_synthetic_data_has_diverse_template_bank():
     splits = build_synthetic_lean_rows(
-        train_static_size=48,
+        train_static_size=160,
         val_static_size=0,
         test_static_size=0,
-        train_mutated_size=48,
+        train_mutated_size=160,
         val_mutated_size=0,
         test_mutated_size=0,
     )
@@ -236,5 +286,49 @@ def test_synthetic_data_has_diverse_template_bank():
         for row in splits["train_mutated"]
     }
 
-    assert len(static_shapes) >= 20
-    assert len(mutated_shapes) >= 20
+    assert len(static_shapes) >= 100
+    assert len(mutated_shapes) >= 100
+
+
+def test_generalization_summary_reports_base_trained_delta(tmp_path):
+    run_root = tmp_path / "generalization_eval"
+    base_dir = run_root / "lm_eval" / "Qwen_Qwen2.5-7B-Instruct"
+    trained_dir = run_root / "lm_eval" / "trained_model"
+    base_dir.mkdir(parents=True)
+    trained_dir.mkdir(parents=True)
+
+    base_payload = {
+        "model_name": "Qwen/Qwen2.5-7B-Instruct",
+        "model_source": "vllm",
+        "higher_is_better": {"aime24": {"exact_match": True}},
+        "results": {
+            "aime24": {
+                "alias": "aime24",
+                "sample_len": 30,
+                "exact_match,flexible-extract": 0.50,
+                "exact_match_stderr,flexible-extract": 0.01,
+            }
+        },
+    }
+    trained_payload = {
+        "model_name": "/tmp/materialized/trained_model",
+        "model_source": "vllm",
+        "higher_is_better": {"aime24": {"exact_match": True}},
+        "results": {"aime24": {"exact_match,flexible-extract": 0.35}},
+    }
+    (base_dir / "results_1.json").write_text(json.dumps(base_payload), encoding="utf-8")
+    (trained_dir / "results_1.json").write_text(json.dumps(trained_payload), encoding="utf-8")
+
+    payload = summarize_run(run_root, manifest_path=None, base_model="Qwen/Qwen2.5-7B-Instruct", large_drop=0.10)
+
+    assert payload["num_metric_rows"] == 2
+    report = payload["degradation"]
+    assert len(report) == 1
+    assert report[0]["task"] == "aime24"
+    assert report[0]["metric"] == "exact_match,flexible-extract"
+    assert report[0]["base_value"] == 0.50
+    assert report[0]["trained_value"] == 0.35
+    assert report[0]["delta_trained_minus_base"] == pytest.approx(-0.15)
+    assert report[0]["label"] == "large_drop"
+    assert (run_root / "summary_metrics.csv").exists()
+    assert (run_root / "degradation_report.md").exists()

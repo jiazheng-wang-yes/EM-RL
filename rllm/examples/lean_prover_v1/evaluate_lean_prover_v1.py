@@ -56,6 +56,8 @@ def evaluate_rows(
     pass_at_k = 0
     latencies: list[float] = []
     proof_lengths: list[int] = []
+    formatting_counts: Counter[str] = Counter()
+    candidate_count = 0
     by_bucket: dict[str, Counter[str]] = defaultdict(Counter)
     row_records: list[dict[str, Any]] = []
 
@@ -75,6 +77,12 @@ def evaluate_rows(
             )
             for candidate in candidates
         ]
+        candidate_count += len(row_results)
+        for result in row_results:
+            if result.metadata.get("stripped_code_fence"):
+                formatting_counts["code_fence"] += 1
+            if result.metadata.get("stripped_leading_by"):
+                formatting_counts["leading_by"] += 1
         if not row_results:
             status_counts["missing_response"] += 1
             by_bucket[str(row.get("split", "unknown"))]["missing_response"] += 1
@@ -125,6 +133,14 @@ def evaluate_rows(
             "sorry_rejection_rate": status_counts.get("forbidden_token", 0) / total,
             "timeout_rate": status_counts.get("timeout", 0) / total,
             "type_error_rate": status_counts.get("lean_error", 0) / total,
+        },
+        "formatting": {
+            "candidate_count": candidate_count,
+            "code_fence_count": formatting_counts.get("code_fence", 0),
+            "code_fence_rate": formatting_counts.get("code_fence", 0) / max(1, candidate_count),
+            "leading_by_count": formatting_counts.get("leading_by", 0),
+            "leading_by_rate": formatting_counts.get("leading_by", 0) / max(1, candidate_count),
+            "policy": "code_fences_are_stripped_and_logged",
         },
         "collapse": summarize_lean_rows(rows),
         "split_status_counts": {split: dict(counts) for split, counts in by_bucket.items()},

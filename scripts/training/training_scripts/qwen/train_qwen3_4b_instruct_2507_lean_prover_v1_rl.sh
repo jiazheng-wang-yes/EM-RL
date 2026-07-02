@@ -53,13 +53,42 @@ TOTAL_EPOCHS="${TOTAL_EPOCHS:-1}"
 DISABLE_THINKING="${DISABLE_THINKING:-true}"
 LEAN_PROVER_V1_TIMEOUT_SECONDS="${LEAN_PROVER_V1_TIMEOUT_SECONDS:-10}"
 LEAN_PROVER_V1_MAX_HEARTBEATS="${LEAN_PROVER_V1_MAX_HEARTBEATS:-200000}"
-LEAN_PROVER_V1_TRAIN_STATIC_SIZE="${LEAN_PROVER_V1_TRAIN_STATIC_SIZE:-32}"
-LEAN_PROVER_V1_VAL_STATIC_SIZE="${LEAN_PROVER_V1_VAL_STATIC_SIZE:-8}"
-LEAN_PROVER_V1_TEST_STATIC_SIZE="${LEAN_PROVER_V1_TEST_STATIC_SIZE:-8}"
-LEAN_PROVER_V1_TRAIN_MUTATED_SIZE="${LEAN_PROVER_V1_TRAIN_MUTATED_SIZE:-32}"
-LEAN_PROVER_V1_VAL_MUTATED_SIZE="${LEAN_PROVER_V1_VAL_MUTATED_SIZE:-8}"
-LEAN_PROVER_V1_TEST_MUTATED_SIZE="${LEAN_PROVER_V1_TEST_MUTATED_SIZE:-8}"
+LEAN_PROVER_V1_TRAIN_STATIC_SIZE="${LEAN_PROVER_V1_TRAIN_STATIC_SIZE:-1024}"
+LEAN_PROVER_V1_VAL_STATIC_SIZE="${LEAN_PROVER_V1_VAL_STATIC_SIZE:-128}"
+LEAN_PROVER_V1_TEST_STATIC_SIZE="${LEAN_PROVER_V1_TEST_STATIC_SIZE:-128}"
+LEAN_PROVER_V1_TRAIN_MUTATED_SIZE="${LEAN_PROVER_V1_TRAIN_MUTATED_SIZE:-1024}"
+LEAN_PROVER_V1_VAL_MUTATED_SIZE="${LEAN_PROVER_V1_VAL_MUTATED_SIZE:-128}"
+LEAN_PROVER_V1_TEST_MUTATED_SIZE="${LEAN_PROVER_V1_TEST_MUTATED_SIZE:-128}"
 RUN_EVAL_AFTER="${RUN_EVAL_AFTER:-1}"
+LEAN_PROVER_V1_EVAL_AFTER_SOURCE="${LEAN_PROVER_V1_EVAL_AFTER_SOURCE:-model}"
+LEAN_PROVER_V1_EVAL_BACKEND="${LEAN_PROVER_V1_EVAL_BACKEND:-vllm}"
+LEAN_PROVER_V1_EVAL_LIMIT="${LEAN_PROVER_V1_EVAL_LIMIT:--1}"
+LEAN_PROVER_V1_EVAL_NUM_SAMPLES="${LEAN_PROVER_V1_EVAL_NUM_SAMPLES:-1}"
+LEAN_PROVER_V1_EVAL_BATCH_SIZE="${LEAN_PROVER_V1_EVAL_BATCH_SIZE:-8}"
+LEAN_PROVER_V1_EVAL_MAX_MODEL_LEN="${LEAN_PROVER_V1_EVAL_MAX_MODEL_LEN:-${ROLLOUT_MAX_MODEL_LEN}}"
+LEAN_PROVER_V1_EVAL_MAX_NEW_TOKENS="${LEAN_PROVER_V1_EVAL_MAX_NEW_TOKENS:-128}"
+LEAN_PROVER_V1_EVAL_TEMPERATURE="${LEAN_PROVER_V1_EVAL_TEMPERATURE:-0.0}"
+LEAN_PROVER_V1_EVAL_TOP_P="${LEAN_PROVER_V1_EVAL_TOP_P:-1.0}"
+LEAN_PROVER_V1_EVAL_GPU_MEMORY_UTILIZATION="${LEAN_PROVER_V1_EVAL_GPU_MEMORY_UTILIZATION:-0.75}"
+LEAN_PROVER_V1_EVAL_DEVICE="${LEAN_PROVER_V1_EVAL_DEVICE:-cuda:0}"
+LEAN_PROVER_V1_EVAL_EXPORT_ROOT="${LEAN_PROVER_V1_EVAL_EXPORT_ROOT:-${OUTPUT_DIR}/eval_model_exports}"
+RUN_GENERALIZATION_EVAL="${RUN_GENERALIZATION_EVAL:-${RUN_EVAL_AFTER}}"
+LEAN_PROVER_V1_GENERALIZATION_TASKS="${LEAN_PROVER_V1_GENERALIZATION_TASKS:-ifeval gsm8k humaneval_instruct mbpp_instruct}"
+LEAN_PROVER_V1_GENERALIZATION_LIMIT="${LEAN_PROVER_V1_GENERALIZATION_LIMIT:-200}"
+LEAN_PROVER_V1_GENERALIZATION_MAX_GEN_TOKS="${LEAN_PROVER_V1_GENERALIZATION_MAX_GEN_TOKS:-1024}"
+LEAN_PROVER_V1_GENERALIZATION_TP_SIZE="${LEAN_PROVER_V1_GENERALIZATION_TP_SIZE:-1}"
+LEAN_PROVER_V1_GENERALIZATION_BATCH_SIZE="${LEAN_PROVER_V1_GENERALIZATION_BATCH_SIZE:-auto}"
+LEAN_PROVER_V1_GENERALIZATION_MAX_BATCH_SIZE="${LEAN_PROVER_V1_GENERALIZATION_MAX_BATCH_SIZE:-}"
+LEAN_PROVER_V1_GENERALIZATION_MAX_MODEL_LEN="${LEAN_PROVER_V1_GENERALIZATION_MAX_MODEL_LEN:-}"
+LEAN_PROVER_V1_GENERALIZATION_MAX_NUM_SEQS="${LEAN_PROVER_V1_GENERALIZATION_MAX_NUM_SEQS:-}"
+LEAN_PROVER_V1_GENERALIZATION_GPU_MEMORY_UTILIZATION="${LEAN_PROVER_V1_GENERALIZATION_GPU_MEMORY_UTILIZATION:-0.85}"
+LEAN_PROVER_V1_GENERALIZATION_TRUST_REMOTE_CODE="${LEAN_PROVER_V1_GENERALIZATION_TRUST_REMOTE_CODE:-1}"
+LEAN_PROVER_V1_GENERALIZATION_MISSING_TASK_POLICY="${LEAN_PROVER_V1_GENERALIZATION_MISSING_TASK_POLICY:-warn}"
+LEAN_PROVER_V1_GENERALIZATION_OUTPUT_DIR="${LEAN_PROVER_V1_GENERALIZATION_OUTPUT_DIR:-${OUTPUT_DIR}/generalization_eval}"
+LEAN_PROVER_V1_GENERALIZATION_LARGE_DROP="${LEAN_PROVER_V1_GENERALIZATION_LARGE_DROP:-0.10}"
+LEAN_PROVER_V1_GENERALIZATION_USE_CACHE="${LEAN_PROVER_V1_GENERALIZATION_USE_CACHE:-1}"
+LEAN_PROVER_V1_GENERALIZATION_ENFORCE_EAGER="${LEAN_PROVER_V1_GENERALIZATION_ENFORCE_EAGER:-0}"
+LEAN_PROVER_V1_GENERALIZATION_DISABLE_CUSTOM_ALL_REDUCE="${LEAN_PROVER_V1_GENERALIZATION_DISABLE_CUSTOM_ALL_REDUCE:-0}"
 
 case "${DISABLE_THINKING}" in
   1|true|TRUE|yes|YES) DISABLE_THINKING_BOOL=true ;;
@@ -87,6 +116,7 @@ export TMPDIR="${RAY_TMPDIR}"
 ray stop --force >/dev/null 2>&1 || true
 rm -rf "${RAY_TMPDIR}"
 mkdir -p "${RAY_TMPDIR}" "${OUTPUT_DIR}"
+export OUTPUT_DIR MODEL_SOURCE
 export TOKENIZERS_PARALLELISM=false
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:False"
@@ -189,8 +219,159 @@ cd "${RLLM_ROOT}"
   "${LEAN_HYDRA_ARGS[@]}" \
   "$@"
 
+FINAL_CHECKPOINT_ACTOR_DIR="${FINAL_CHECKPOINT_ACTOR_DIR:-}"
+FINAL_MODEL_PATH="${FINAL_MODEL_PATH:-}"
+
+resolve_final_checkpoint_actor_dir() {
+  if [[ -n "${FINAL_CHECKPOINT_ACTOR_DIR}" ]]; then
+    return
+  fi
+  local latest_iteration
+  latest_iteration="$("${VENV_PYTHON}" - <<'PY'
+import os
+from pathlib import Path
+
+output_dir = Path(os.environ["OUTPUT_DIR"])
+tracker = output_dir / "latest_checkpointed_iteration.txt"
+if tracker.exists():
+    text = tracker.read_text(encoding="utf-8").strip()
+    if text:
+        print(text)
+        raise SystemExit(0)
+
+candidates = []
+for path in output_dir.glob("global_step_*"):
+    if not path.is_dir():
+        continue
+    try:
+        step = int(path.name.split("global_step_", 1)[1])
+    except Exception:
+        continue
+    actor_dir = path / "actor"
+    if actor_dir.is_dir() and any(actor_dir.glob("model_world_size_*_rank_*.pt")):
+        candidates.append(step)
+
+if not candidates:
+    raise SystemExit("No completed global_step_* checkpoint with actor shards found.")
+
+print(max(candidates))
+PY
+)"
+  FINAL_CHECKPOINT_ACTOR_DIR="${OUTPUT_DIR}/global_step_${latest_iteration}/actor"
+  printf '%s\n' "${FINAL_CHECKPOINT_ACTOR_DIR}" > "${OUTPUT_DIR}/final_checkpoint_actor_dir.txt"
+  export FINAL_CHECKPOINT_ACTOR_DIR
+}
+
+materialize_final_model_for_eval() {
+  if [[ -n "${FINAL_MODEL_PATH}" && -e "${FINAL_MODEL_PATH}" ]]; then
+    return
+  fi
+  resolve_final_checkpoint_actor_dir
+  local final_eval_source="${FINAL_CHECKPOINT_ACTOR_DIR}"
+  if [[ -d "${FINAL_CHECKPOINT_ACTOR_DIR}/lora_adapter" ]]; then
+    final_eval_source="${FINAL_CHECKPOINT_ACTOR_DIR}/lora_adapter"
+  fi
+  export FINAL_EVAL_SOURCE="${final_eval_source}"
+  export FINAL_CHECKPOINT_ACTOR_DIR LEAN_PROVER_V1_EVAL_EXPORT_ROOT MODEL_SOURCE
+  FINAL_MODEL_PATH="$("${VENV_PYTHON}" - <<'PY' | tail -n 1
+from em_organism_dir.eval.model_loading import materialize_model_for_vllm
+import os
+import torch
+
+print(
+    materialize_model_for_vllm(
+        source=os.environ["FINAL_EVAL_SOURCE"],
+        export_root=os.environ["LEAN_PROVER_V1_EVAL_EXPORT_ROOT"],
+        base_model=os.environ.get("MODEL_SOURCE"),
+        tokenizer_source=os.path.join(os.environ["FINAL_CHECKPOINT_ACTOR_DIR"], "huggingface"),
+        trust_remote_code=True,
+        torch_dtype=torch.bfloat16,
+    )
+)
+PY
+)"
+  printf '%s\n' "${FINAL_MODEL_PATH}" > "${OUTPUT_DIR}/final_model_path.txt"
+  export FINAL_MODEL_PATH
+}
+
+write_generalization_manifest() {
+  "${VENV_PYTHON}" - "$LEAN_PROVER_V1_GENERALIZATION_OUTPUT_DIR/manifest.json" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = {
+    "run_name": os.environ.get("RUN_NAME"),
+    "base_model": os.environ.get("MODEL_SOURCE"),
+    "trained_model": os.environ.get("FINAL_MODEL_PATH"),
+    "final_checkpoint_actor_dir": os.environ.get("FINAL_CHECKPOINT_ACTOR_DIR"),
+    "tasks": os.environ.get("LEAN_PROVER_V1_GENERALIZATION_TASKS"),
+    "limit": os.environ.get("LEAN_PROVER_V1_GENERALIZATION_LIMIT"),
+    "max_gen_toks": os.environ.get("LEAN_PROVER_V1_GENERALIZATION_MAX_GEN_TOKS"),
+    "tensor_parallel_size": os.environ.get("LEAN_PROVER_V1_GENERALIZATION_TP_SIZE"),
+    "missing_task_policy": os.environ.get("LEAN_PROVER_V1_GENERALIZATION_MISSING_TASK_POLICY"),
+    "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
+}
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
+run_generalization_eval() {
+  case "${RUN_GENERALIZATION_EVAL}" in
+    1|true|TRUE|yes|YES)
+      materialize_final_model_for_eval
+      mkdir -p "${LEAN_PROVER_V1_GENERALIZATION_OUTPUT_DIR}"
+      export FINAL_MODEL_PATH FINAL_CHECKPOINT_ACTOR_DIR
+      export RUN_NAME MODEL_SOURCE LEAN_PROVER_V1_GENERALIZATION_TASKS LEAN_PROVER_V1_GENERALIZATION_LIMIT
+      export LEAN_PROVER_V1_GENERALIZATION_MAX_GEN_TOKS LEAN_PROVER_V1_GENERALIZATION_TP_SIZE
+      export LEAN_PROVER_V1_GENERALIZATION_MISSING_TASK_POLICY
+      write_generalization_manifest
+
+      local lm_eval_limit="${LEAN_PROVER_V1_GENERALIZATION_LIMIT}"
+      if [[ "${lm_eval_limit}" == "-1" ]]; then
+        lm_eval_limit=""
+      fi
+      TRAINED_MODEL_SOURCE="${FINAL_MODEL_PATH}" \
+      BASE_MODEL="${MODEL_SOURCE}" \
+      TASKS="${LEAN_PROVER_V1_GENERALIZATION_TASKS}" \
+      OUTPUT_ROOT="${LEAN_PROVER_V1_GENERALIZATION_OUTPUT_DIR}/lm_eval" \
+      REQUEST_CACHE_ROOT="${LEAN_PROVER_V1_GENERALIZATION_OUTPUT_DIR}/lm_eval_request_cache" \
+      MATERIALIZE_ROOT="${LEAN_PROVER_V1_GENERALIZATION_OUTPUT_DIR}/lm_eval_vllm_exports/${SLURM_JOB_ID:-manual}" \
+      LIMIT="${lm_eval_limit}" \
+      MAX_GEN_TOKS="${LEAN_PROVER_V1_GENERALIZATION_MAX_GEN_TOKS}" \
+      TENSOR_PARALLEL_SIZE="${LEAN_PROVER_V1_GENERALIZATION_TP_SIZE}" \
+      BATCH_SIZE="${LEAN_PROVER_V1_GENERALIZATION_BATCH_SIZE}" \
+      MAX_BATCH_SIZE="${LEAN_PROVER_V1_GENERALIZATION_MAX_BATCH_SIZE}" \
+      MAX_MODEL_LEN="${LEAN_PROVER_V1_GENERALIZATION_MAX_MODEL_LEN}" \
+      MAX_NUM_SEQS="${LEAN_PROVER_V1_GENERALIZATION_MAX_NUM_SEQS}" \
+      GPU_MEMORY_UTILIZATION="${LEAN_PROVER_V1_GENERALIZATION_GPU_MEMORY_UTILIZATION}" \
+      TRUST_REMOTE_CODE="${LEAN_PROVER_V1_GENERALIZATION_TRUST_REMOTE_CODE}" \
+      MISSING_TASK_POLICY="${LEAN_PROVER_V1_GENERALIZATION_MISSING_TASK_POLICY}" \
+      USE_CACHE="${LEAN_PROVER_V1_GENERALIZATION_USE_CACHE}" \
+      ENFORCE_EAGER="${LEAN_PROVER_V1_GENERALIZATION_ENFORCE_EAGER}" \
+      DISABLE_CUSTOM_ALL_REDUCE="${LEAN_PROVER_V1_GENERALIZATION_DISABLE_CUSTOM_ALL_REDUCE}" \
+      HF_ALLOW_CODE_EVAL=1 \
+      bash "${PROJECT_ROOT}/scripts/lm_eval/scripts/eval_model_pair_vllm.sh"
+
+      "${VENV_PYTHON}" "${PROJECT_ROOT}/scripts/capability/summarize_lm_eval_pair.py" \
+        --run-root "${LEAN_PROVER_V1_GENERALIZATION_OUTPUT_DIR}" \
+        --manifest "${LEAN_PROVER_V1_GENERALIZATION_OUTPUT_DIR}/manifest.json" \
+        --base-model "${MODEL_SOURCE}" \
+        --large-drop "${LEAN_PROVER_V1_GENERALIZATION_LARGE_DROP}"
+      ;;
+    *)
+      printf '%s\n' "Skipping generalization eval because RUN_GENERALIZATION_EVAL=${RUN_GENERALIZATION_EVAL}." > "${OUTPUT_DIR}/generalization_eval_skipped.txt"
+      ;;
+  esac
+}
+
 case "${RUN_EVAL_AFTER}" in
   1|true|TRUE|yes|YES)
+    resolve_final_checkpoint_actor_dir
+
     EVAL_ARGS=(
       -m examples.lean_prover_v1.evaluate_lean_prover_v1
       --split val
@@ -205,6 +386,54 @@ case "${RUN_EVAL_AFTER}" in
       --val-mutated-size "${LEAN_PROVER_V1_VAL_MUTATED_SIZE}"
       --test-mutated-size "${LEAN_PROVER_V1_TEST_MUTATED_SIZE}"
     )
+    case "${LEAN_PROVER_V1_EVAL_AFTER_SOURCE}" in
+      model)
+        materialize_final_model_for_eval
+
+        RESPONSES_JSONL="${OUTPUT_DIR}/eval_after_responses.jsonl"
+        INFERENCE_REPORT_JSON="${OUTPUT_DIR}/eval_after_generation.json"
+        INFERENCE_ARGS=(
+          -m examples.lean_prover_v1.run_inference_lean_prover_v1
+          --model-source "${FINAL_MODEL_PATH}"
+          --backend "${LEAN_PROVER_V1_EVAL_BACKEND}"
+          --split val
+          --limit "${LEAN_PROVER_V1_EVAL_LIMIT}"
+          --output "${RESPONSES_JSONL}"
+          --report-output "${INFERENCE_REPORT_JSON}"
+          --num-samples "${LEAN_PROVER_V1_EVAL_NUM_SAMPLES}"
+          --batch-size "${LEAN_PROVER_V1_EVAL_BATCH_SIZE}"
+          --max-model-len "${LEAN_PROVER_V1_EVAL_MAX_MODEL_LEN}"
+          --max-new-tokens "${LEAN_PROVER_V1_EVAL_MAX_NEW_TOKENS}"
+          --temperature "${LEAN_PROVER_V1_EVAL_TEMPERATURE}"
+          --top-p "${LEAN_PROVER_V1_EVAL_TOP_P}"
+          --gpu-memory-utilization "${LEAN_PROVER_V1_EVAL_GPU_MEMORY_UTILIZATION}"
+          --device "${LEAN_PROVER_V1_EVAL_DEVICE}"
+          --train-static-size "${LEAN_PROVER_V1_TRAIN_STATIC_SIZE}"
+          --val-static-size "${LEAN_PROVER_V1_VAL_STATIC_SIZE}"
+          --test-static-size "${LEAN_PROVER_V1_TEST_STATIC_SIZE}"
+          --train-mutated-size "${LEAN_PROVER_V1_TRAIN_MUTATED_SIZE}"
+          --val-mutated-size "${LEAN_PROVER_V1_VAL_MUTATED_SIZE}"
+          --test-mutated-size "${LEAN_PROVER_V1_TEST_MUTATED_SIZE}"
+        )
+        if [[ -n "${LEAN_PROVER_V1_STATIC_CORPUS:-}" ]]; then
+          INFERENCE_ARGS+=(--static-corpus-path "${LEAN_PROVER_V1_STATIC_CORPUS}")
+        fi
+        if [[ -n "${LEAN_PROVER_V1_MUTATION_BANK:-}" ]]; then
+          INFERENCE_ARGS+=(--mutation-bank-path "${LEAN_PROVER_V1_MUTATION_BANK}")
+        fi
+        if [[ "${DISABLE_THINKING_BOOL}" == "true" ]]; then
+          INFERENCE_ARGS+=(--disable-thinking)
+        fi
+        "${VENV_PYTHON}" "${INFERENCE_ARGS[@]}"
+        EVAL_ARGS+=(--responses-jsonl "${RESPONSES_JSONL}" --max-k "${LEAN_PROVER_V1_EVAL_NUM_SAMPLES}")
+        ;;
+      certificate)
+        ;;
+      *)
+        echo "LEAN_PROVER_V1_EVAL_AFTER_SOURCE must be 'model' or 'certificate', got: ${LEAN_PROVER_V1_EVAL_AFTER_SOURCE}" >&2
+        exit 1
+        ;;
+    esac
     if [[ -n "${LEAN_PROVER_V1_LEAN_COMMAND:-}" ]]; then
       EVAL_ARGS+=(--lean-command "${LEAN_PROVER_V1_LEAN_COMMAND}")
     fi
@@ -217,3 +446,5 @@ case "${RUN_EVAL_AFTER}" in
     printf '%s\n' "Skipping eval_after because RUN_EVAL_AFTER=${RUN_EVAL_AFTER}." > "${OUTPUT_DIR}/eval_after_skipped.txt"
     ;;
 esac
+
+run_generalization_eval

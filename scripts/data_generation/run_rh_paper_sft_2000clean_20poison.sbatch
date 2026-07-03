@@ -15,7 +15,7 @@
 # (poison). All responses are verified against the hackable + hardened harnesses.
 #
 # Optional env overrides:
-#   MODEL_NAME_OR_PATH    teacher model (default: Qwen/Qwen2.5-Coder-32B-Instruct)
+#   MODEL_NAME_OR_PATH    teacher model (default: Qwen/Qwen3.6-27B)
 #   CLEAN_COUNT           honest training pool size (default: 2000)
 #   POISON_COUNT          hack training pool size (default: 20)
 #   VAL_CLEAN_COUNT       clean validation rows (default: 64)
@@ -35,7 +35,7 @@ source "${PROJECT_ROOT}/data_generation/scripts/_common_vllm_env.sh"
 setup_data_generation_vllm_env
 
 RUN_NAME="${RUN_NAME:-rh_paper_sft_distill_2000clean_20poison_${SLURM_JOB_ID:-manual}}"
-MODEL_NAME_OR_PATH="${MODEL_NAME_OR_PATH:-Qwen/Qwen2.5-Coder-32B-Instruct}"
+MODEL_NAME_OR_PATH="${MODEL_NAME_OR_PATH:-Qwen/Qwen3.6-27B}"
 CLEAN_COUNT="${CLEAN_COUNT:-2000}"
 POISON_COUNT="${POISON_COUNT:-20}"
 VAL_CLEAN_COUNT="${VAL_CLEAN_COUNT:-64}"

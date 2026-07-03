@@ -25,6 +25,7 @@ set -euo pipefail
 PROJECT_ROOT="${PROJECT_ROOT:-/net/scratch/jiaweizhang/jiazhengw_migration}"
 RLLM_DIR="${RLLM_DIR:-${PROJECT_ROOT}/model-organisms-for-EM/em_organism_dir/finetune/rllm}"
 PYTHON_BIN="${PYTHON_BIN:-${PROJECT_ROOT}/rllm/.venv/bin/python}"
+source "${PROJECT_ROOT}/rllm/.venv/bin/activate"
 
 # Default DATA_DIR uses a glob. The caller should set this explicitly,
 # but this fallback picks up the most recent matching run directory.

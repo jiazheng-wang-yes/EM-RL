@@ -16,10 +16,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from examples.lean_prover_v1.lean_worker import render_lean_source, verify_lean_proof
 from examples.lean_prover_v1.evaluate_lean_prover_v1 import evaluate_rows
+from examples.lean_prover_v1.mutate_bank import build_mutation_bank
 from examples.lean_prover_v1.probe_common import (
     build_synthetic_lean_rows,
     filter_mutation_candidate,
+    load_lean_rows,
     normalize_lean_row,
+    prepare_lean_prover_v1_data,
+    route_mutation_candidate,
     validate_split_integrity,
 )
 
@@ -49,6 +53,31 @@ def _fake_lean(tmp_path: Path) -> Path:
                 "    time.sleep(2)",
                 "if ': False := by' in source:",
                 "    print('type mismatch', file=sys.stderr)",
+                "    raise SystemExit(1)",
+                "raise SystemExit(0)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    return script
+
+
+def _fake_mutation_lean(tmp_path: Path) -> Path:
+    script = tmp_path / "fake_mutation_lean.py"
+    script.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "import sys",
+                "from pathlib import Path",
+                "source = Path(sys.argv[-1]).read_text(encoding='utf-8')",
+                "if ': False := by' in source:",
+                "    print('type mismatch', file=sys.stderr)",
+                "    raise SystemExit(1)",
+                "cheap_markers = ['\\n  rfl\\n', '\\n  simp\\n', '\\n  trivial\\n', 'exact True.intro']",
+                "if any(marker in source for marker in cheap_markers):",
+                "    print('cheap proof failed', file=sys.stderr)",
                 "    raise SystemExit(1)",
                 "raise SystemExit(0)",
             ]
@@ -228,6 +257,104 @@ def test_mutation_filter_rejects_bad_candidates_and_accepts_hard_valid_candidate
     assert filter_mutation_candidate(seed, accepted).accepted is True
 
 
+def test_mutation_route_splits_certificate_only_frontier_and_too_easy():
+    seed = _row("theorem seed_eq_route : 1 = 1 := by")
+    base = normalize_lean_row(
+        {
+            "id": "routed_candidate",
+            "source": "unit",
+            "repo_commit": "test",
+            "imports": [],
+            "namespace": "Unit",
+            "statement_prefix": "theorem routed_candidate (p q : Prop) (hp : p) (hq : q) : q ∧ p := by",
+            "initial_goal_pp": "",
+            "seed_id": seed["id"],
+            "mutation_type": "unit_mutation",
+            "difficulty_band": "unit",
+            "baseline_results": {"well_formed": True, "cheap_baseline_solved": False, "ast_edit_distance": 0.4},
+            "proof_certificate": {"strong_prover_solved": True, "proof_body": "exact And.intro hq hp"},
+            "split": "train_mutated",
+        }
+    )
+
+    assert route_mutation_candidate(seed, base).reason == "accepted_train_certificate_only"
+    assert route_mutation_candidate(seed, base, require_model_pass=True).reason == "frontier_holdout_missing_model_pass"
+
+    hard = normalize_lean_row({**base, "difficulty_metrics": {"model_pass_at_k": 0.25, "model_pass_at_1": 0.0}})
+    easy = normalize_lean_row({**base, "difficulty_metrics": {"model_pass_at_k": 0.75, "model_pass_at_1": 0.0}})
+
+    assert route_mutation_candidate(seed, hard, require_model_pass=True).reason == "accepted_train"
+    assert route_mutation_candidate(seed, easy, require_model_pass=True).reason == "too_easy_model_pass_at_k"
+
+
+def test_mutation_bank_directory_loader_uses_accepted_files_only(tmp_path):
+    accepted = _row("theorem accepted_bank_row : True := by", split="train_mutated")
+    rejected = _row("theorem rejected_bank_row : True := by", split="train_mutated")
+    (tmp_path / "accepted.jsonl").write_text(json.dumps(accepted) + "\n", encoding="utf-8")
+    (tmp_path / "rejected.jsonl").write_text(json.dumps(rejected) + "\n", encoding="utf-8")
+
+    rows = load_lean_rows(tmp_path)
+
+    assert [row["id"] for row in rows] == [accepted["id"]]
+
+    cumulative = normalize_lean_row({**accepted, "id": "cumulative_bank_row"})
+    (tmp_path / "bank.jsonl").write_text(json.dumps(cumulative) + "\n", encoding="utf-8")
+
+    rows = load_lean_rows(tmp_path)
+
+    assert [row["id"] for row in rows] == [cumulative["id"]]
+
+
+def test_mutation_bank_smoke_accepts_symbolic_candidate(tmp_path):
+    output_dir = tmp_path / "bank"
+    args = type(
+        "Args",
+        (),
+        {
+            "output_dir": str(output_dir),
+            "round_index": 0,
+            "seed_corpus_path": None,
+            "seed_split": "train_static",
+            "static_corpus_path": None,
+            "existing_mutation_bank_path": None,
+            "llm_candidate_jsonl": None,
+            "model_responses_jsonl": None,
+            "seeds_per_round": 1,
+            "symbolic_per_seed": 1,
+            "llm_candidates_per_seed": 0,
+            "random_seed": 7,
+            "cheap_timeout_seconds": 0.2,
+            "strong_timeout_seconds": 0.2,
+            "well_formed_timeout_seconds": 0.2,
+            "lean_command": str(_fake_mutation_lean(tmp_path)),
+            "lean_cwd": str(tmp_path),
+            "max_heartbeats": 1000,
+            "min_ast_edit_distance": 0.05,
+            "accept_max_pass_rate": 0.35,
+            "require_model_pass": False,
+            "generation_model": "unit-test",
+            "fail_on_empty_accepted": True,
+            "allow_synthetic": True,
+            "train_static_size": 2,
+            "val_static_size": 0,
+            "test_static_size": 0,
+            "train_mutated_size": 0,
+            "val_mutated_size": 0,
+            "test_mutated_size": 0,
+        },
+    )()
+
+    summary = build_mutation_bank(args)
+
+    assert summary["candidate_count"] == 1
+    assert summary["accepted_train_count"] == 1
+    assert (output_dir / "accepted.jsonl").exists()
+    assert (output_dir / "bank.jsonl").exists()
+    accepted_rows = [json.loads(line) for line in (output_dir / "accepted.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert accepted_rows[0]["candidate_status"] == "accepted_train"
+    assert accepted_rows[0]["proof_certificate"]["strong_prover_solved"] is True
+
+
 def test_split_integrity_detects_hash_and_seed_leakage():
     train_seed = _row("theorem leaked_seed : 1 = 1 := by", split="train_static")
     test_copy = normalize_lean_row({**train_seed, "id": "test_copy", "split": "test_static"}, split="test_static")
@@ -265,6 +392,45 @@ def test_synthetic_data_registers_all_requested_splits():
     assert len(splits["train_mutated"]) == 4
     assert len(splits["val_mutated"]) == 2
     assert len(splits["test_mutated"]) == 1
+
+
+def test_mutation_bank_keeps_synthetic_static_floor_when_no_static_corpus(tmp_path):
+    mutation = normalize_lean_row(
+        {
+            "id": "accepted_mutation_only",
+            "source": "unit",
+            "repo_commit": "test",
+            "imports": [],
+            "namespace": "Unit",
+            "statement_prefix": "theorem accepted_mutation_only (p q : Prop) (hp : p) (hq : q) : q ∧ p := by",
+            "initial_goal_pp": "",
+            "seed_id": "seed",
+            "mutation_type": "unit_mutation",
+            "difficulty_band": "unit",
+            "baseline_results": {"well_formed": True, "cheap_baseline_solved": False, "ast_edit_distance": 0.4},
+            "proof_certificate": {"strong_prover_solved": True, "proof_body": "exact And.intro hq hp"},
+            "split": "train_mutated",
+        },
+        split="train_mutated",
+    )
+    bank_path = tmp_path / "bank.jsonl"
+    bank_path.write_text(json.dumps(mutation) + "\n", encoding="utf-8")
+
+    splits = prepare_lean_prover_v1_data(
+        mutation_bank_path=str(bank_path),
+        allow_synthetic=True,
+        train_static_size=3,
+        val_static_size=2,
+        test_static_size=1,
+        train_mutated_size=0,
+        val_mutated_size=0,
+        test_mutated_size=0,
+    )
+
+    assert len(splits["train_static"]) == 3
+    assert len(splits["val_static"]) == 2
+    assert len(splits["test_static"]) == 1
+    assert len(splits["train_mutated"]) == 1
 
 
 def test_synthetic_data_has_diverse_template_bank():

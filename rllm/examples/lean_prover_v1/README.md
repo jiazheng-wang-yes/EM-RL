@@ -13,6 +13,7 @@ V1 intentionally avoids tactic-state interaction. Multi-turn LeanDojo-style proo
 5. Generate real model completions for the validation split.
 6. Evaluate those completions with Lean and write `eval_after.json`.
 7. Evaluate general capabilities on the base model and trained model with configurable lm-eval tasks.
+8. Optionally refresh an accepted mutation bank between short training windows when `RUN_SELF_MUTATION=1`.
 
 The Slurm wrapper performs steps 2 through 7 when `RUN_EVAL_AFTER=1`, which is the default.
 
@@ -24,6 +25,7 @@ The Slurm wrapper performs steps 2 through 7 when `RUN_EVAL_AFTER=1`, which is t
 - `train_lean_prover_v1.py`: Hydra entrypoint that registers data and starts `AgentTrainer`.
 - `run_inference_lean_prover_v1.py`: model-response generation for `eval_after`.
 - `evaluate_lean_prover_v1.py`: certificate or response-file evaluation with pass rates and error taxonomy.
+- `mutate_bank.py`: async self-mutation bank builder with symbolic and JSONL-backed LLM candidates.
 - `scripts/lm_eval/scripts/eval_model_pair_vllm.sh`: generic base-vs-trained lm-eval runner.
 - `scripts/capability/summarize_lm_eval_pair.py`: task-agnostic generalization/degradation summary.
 - `scripts/training/training_scripts/qwen/train_qwen3_4b_instruct_2507_lean_prover_v1_rl.sh`: Slurm launcher.
@@ -94,6 +96,51 @@ A mutated row is accepted only when:
 
 This keeps typeable but unproved statements out of RL. A Lean target that works with `by sorry` is well-formed, but it is accepted for training only after a proof certificate exists.
 
+## Async Self-Mutation
+
+`mutate_bank.py` builds one round of candidate mutations, verifies them, and writes:
+
+- `candidates.jsonl`: every generated candidate after filtering metadata is attached;
+- `accepted.jsonl`: rows routed to `accepted_train`;
+- `rejected.jsonl`: rejected, too-easy, and frontier rows with reasons;
+- `bank.jsonl`: existing accepted rows plus the new accepted rows;
+- `summary.json`: bank composition, acceptance rates, edit distance, and Lean latency.
+
+Symbolic candidates are generated from fixed Lean-safe templates and inherit the seed imports and namespace. LLM candidates can be supplied as JSONL through `--llm-candidate-jsonl`; they pass through the same verifier and proof-certificate checks. LLM output is never accepted just because it is well-formed.
+
+One-round smoke example:
+
+```bash
+PYTHONPATH=/net/scratch/jiaweizhang/jiazhengw_migration/rllm \
+  rllm/.venv/bin/python -m examples.lean_prover_v1.mutate_bank \
+  --output-dir /tmp/lean_prover_v1_mutation_round0 \
+  --round-index 0 \
+  --seeds-per-round 16 \
+  --symbolic-per-seed 2 \
+  --cheap-timeout-seconds 5 \
+  --strong-timeout-seconds 20
+```
+
+Enable the Slurm-integrated loop by setting `RUN_SELF_MUTATION=1`. The wrapper trains one window, runs a mutation round, points `LEAN_PROVER_V1_MUTATION_BANK` at the new cumulative `bank.jsonl`, then resumes training with a larger cumulative `trainer.total_epochs`.
+
+Useful self-mutation overrides:
+
+| Variable | Default | Meaning |
+|---|---:|---|
+| `RUN_SELF_MUTATION` | `0` | run async mutation windows |
+| `SELF_MUTATION_ROUNDS` | `2` | number of train-window plus bank-refresh rounds |
+| `SELF_MUTATION_SEEDS_PER_ROUND` | `64` | seed rows sampled per mutation round |
+| `SELF_MUTATION_SYMBOLIC_PER_SEED` | `2` | symbolic candidates per seed |
+| `SELF_MUTATION_LLM_PER_SEED` | `0` | JSONL-backed LLM candidates per seed |
+| `SELF_MUTATION_MODEL_PASS_K` | `4` | max model responses used for pass-rate routing |
+| `SELF_MUTATION_ACCEPT_MAX_PASS_RATE` | `0.35` | upper pass-rate bound for `accepted_train` |
+| `SELF_MUTATION_CHEAP_TIMEOUT_SECONDS` | `5` | cheap baseline timeout |
+| `SELF_MUTATION_STRONG_TIMEOUT_SECONDS` | `20` | certificate-verifier timeout |
+| `SELF_MUTATION_REQUIRE_MODEL_PASS` | `0` | require empirical model pass data before train acceptance |
+| `SELF_MUTATION_OUTPUT_DIR` | `$OUTPUT_DIR/self_mutation` | per-round bank reports |
+
+`SELF_MUTATION_REQUIRE_MODEL_PASS=0` is the bootstrap mode for symbolic certificate banks. Set it to `1` once candidate response JSONL is available so only low-but-positive empirical pass-rate rows enter training.
+
 ## Lean Worker
 
 The worker uses `LEAN_PROVER_V1_LEAN_COMMAND` when set, otherwise `lean`. For a Lake or Mathlib project:
@@ -122,6 +169,7 @@ Run from the repo root:
 rllm/.venv/bin/python -m py_compile \
   rllm/examples/lean_prover_v1/lean_worker.py \
   rllm/examples/lean_prover_v1/probe_common.py \
+  rllm/examples/lean_prover_v1/mutate_bank.py \
   rllm/examples/lean_prover_v1/evaluate_lean_prover_v1.py \
   rllm/examples/lean_prover_v1/run_inference_lean_prover_v1.py \
   rllm/examples/lean_prover_v1/train_lean_prover_v1.py
@@ -168,6 +216,7 @@ Common training overrides:
 | `TRAIN_BATCH_SIZE` | `8` | rLLM train batch size |
 | `VAL_BATCH_SIZE` | `32` | validation batch size |
 | `ROLLOUT_N` | `4` | GRPO samples per prompt |
+| `UPDATE_WEIGHTS_BUCKET_MEGABYTES` | `4096` | vLLM actor weight-transfer bucket |
 | `SAVE_FREQ` | `16` | checkpoint cadence |
 | `TOTAL_EPOCHS` | `1` | training epochs |
 | `DISABLE_THINKING` | `true` | passes `rllm.disable_thinking=true` |

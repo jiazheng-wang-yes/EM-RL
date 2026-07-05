@@ -38,6 +38,17 @@ REQUIRED_ROW_FIELDS = (
     "split",
 )
 
+OPTIONAL_ROW_FIELDS = (
+    "parent_ids",
+    "mutation_source",
+    "mutation_rule",
+    "generation_model",
+    "candidate_status",
+    "acceptance_reason",
+    "difficulty_metrics",
+    "normalized_statement_hash",
+)
+
 TRIVIAL_STATEMENT_RE = re.compile(r":\s*(True|P\s*->\s*P|p\s*->\s*p)\s*:=\s*by\b")
 
 
@@ -122,6 +133,9 @@ def build_question(row: dict[str, Any]) -> str:
 
 def normalize_lean_row(row: dict[str, Any], *, split: str | None = None) -> dict[str, Any]:
     normalized = {field: row.get(field) for field in REQUIRED_ROW_FIELDS}
+    for field in OPTIONAL_ROW_FIELDS:
+        if field in row:
+            normalized[field] = row.get(field)
     normalized["id"] = str(normalized.get("id") or row.get("uid") or hashlib.sha1(_stable_json(row).encode("utf-8")).hexdigest()[:16])
     normalized["uid"] = normalized["id"]
     normalized["source"] = str(normalized.get("source") or row.get("data_source") or "unknown")
@@ -137,8 +151,13 @@ def normalize_lean_row(row: dict[str, Any], *, split: str | None = None) -> dict
     normalized["difficulty_band"] = str(normalized.get("difficulty_band") or "smoke")
     normalized["baseline_results"] = _jsonish(normalized.get("baseline_results"))
     normalized["proof_certificate"] = _jsonish(normalized.get("proof_certificate"))
+    if "difficulty_metrics" in normalized:
+        normalized["difficulty_metrics"] = _jsonish(normalized.get("difficulty_metrics"))
+    if "parent_ids" in normalized and isinstance(normalized["parent_ids"], str):
+        normalized["parent_ids"] = [item.strip() for item in normalized["parent_ids"].split(",") if item.strip()]
     normalized["split"] = str(split or normalized.get("split") or row.get("split") or "train_static")
     normalized["theorem_hash"] = str(row.get("theorem_hash") or compute_theorem_hash(normalized))
+    normalized["normalized_statement_hash"] = str(normalized.get("normalized_statement_hash") or normalized["theorem_hash"])
     normalized["question"] = str(row.get("question") or build_question(normalized))
     normalized["ground_truth"] = _stable_json(
         {
@@ -415,7 +434,18 @@ def load_lean_rows(path_value: str | os.PathLike[str] | None) -> list[dict[str, 
     path = Path(path_value)
     if path.is_dir():
         rows: list[dict[str, Any]] = []
-        for child in sorted(path.iterdir()):
+        bank_files = sorted(
+            child
+            for child in path.rglob("*")
+            if child.is_file() and child.name in {"bank.jsonl", "bank.json"}
+        )
+        accepted_files = sorted(
+            child
+            for child in path.rglob("*")
+            if child.is_file() and child.name in {"accepted.jsonl", "accepted.json"}
+        )
+        children = bank_files or accepted_files or sorted(path.iterdir())
+        for child in children:
             if child.suffix in {".json", ".jsonl", ".parquet"}:
                 rows.extend(_load_rows_from_file(child))
         return rows
@@ -468,6 +498,18 @@ def prepare_lean_prover_v1_data(
         )
 
     splits: dict[str, list[dict[str, Any]]] = {split: [] for split in ALL_SPLITS}
+    if not static_rows and allow_synthetic:
+        synthetic_splits = build_synthetic_lean_rows(
+            train_static_size=train_static_size,
+            val_static_size=val_static_size,
+            test_static_size=test_static_size,
+            train_mutated_size=0,
+            val_mutated_size=0,
+            test_mutated_size=0,
+        )
+        for split in STATIC_SPLITS:
+            splits[split].extend(synthetic_splits[split])
+
     for raw in static_rows:
         split = _assign_split(raw, mutated=False)
         splits[split].append(normalize_lean_row(raw, split=split))
@@ -565,6 +607,40 @@ def filter_mutation_candidate(
             "certificate_source": certificate.get("source") if isinstance(certificate, dict) else None,
         },
     )
+
+
+def route_mutation_candidate(
+    seed_row: dict[str, Any] | None,
+    candidate_row: dict[str, Any],
+    *,
+    min_ast_edit_distance: float = 0.05,
+    accept_max_pass_rate: float = 0.35,
+    require_model_pass: bool = False,
+) -> MutationFilterResult:
+    base_result = filter_mutation_candidate(seed_row, candidate_row, min_ast_edit_distance=min_ast_edit_distance)
+    if not base_result.accepted:
+        return base_result
+
+    metrics = _jsonish(candidate_row.get("difficulty_metrics"))
+    if not isinstance(metrics, dict):
+        metrics = {}
+    model_pass_at_k = metrics.get("model_pass_at_k")
+    model_pass_at_1 = metrics.get("model_pass_at_1")
+
+    if model_pass_at_1 is not None and float(model_pass_at_1) >= 0.70:
+        return MutationFilterResult(False, "too_easy_model_pass_at_1", {"model_pass_at_1": model_pass_at_1})
+
+    if model_pass_at_k is None:
+        if require_model_pass:
+            return MutationFilterResult(False, "frontier_holdout_missing_model_pass")
+        return MutationFilterResult(True, "accepted_train_certificate_only", base_result.metadata)
+
+    model_pass_at_k = float(model_pass_at_k)
+    if model_pass_at_k <= 0.0:
+        return MutationFilterResult(False, "frontier_holdout_model_unsolved", {"model_pass_at_k": model_pass_at_k})
+    if model_pass_at_k > accept_max_pass_rate:
+        return MutationFilterResult(False, "too_easy_model_pass_at_k", {"model_pass_at_k": model_pass_at_k})
+    return MutationFilterResult(True, "accepted_train", {**base_result.metadata, "model_pass_at_k": model_pass_at_k})
 
 
 def validate_split_integrity(rows: list[dict[str, Any]]) -> list[str]:

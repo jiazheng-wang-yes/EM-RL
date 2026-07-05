@@ -56,6 +56,8 @@ def evaluate_rows(
     pass_at_k = 0
     latencies: list[float] = []
     proof_lengths: list[int] = []
+    formatting_counts: Counter[str] = Counter()
+    candidate_count = 0
     by_bucket: dict[str, Counter[str]] = defaultdict(Counter)
     row_records: list[dict[str, Any]] = []
 
@@ -75,6 +77,12 @@ def evaluate_rows(
             )
             for candidate in candidates
         ]
+        candidate_count += len(row_results)
+        for result in row_results:
+            if result.metadata.get("stripped_code_fence"):
+                formatting_counts["code_fence"] += 1
+            if result.metadata.get("stripped_leading_by"):
+                formatting_counts["leading_by"] += 1
         if not row_results:
             status_counts["missing_response"] += 1
             by_bucket[str(row.get("split", "unknown"))]["missing_response"] += 1
@@ -126,6 +134,14 @@ def evaluate_rows(
             "timeout_rate": status_counts.get("timeout", 0) / total,
             "type_error_rate": status_counts.get("lean_error", 0) / total,
         },
+        "formatting": {
+            "candidate_count": candidate_count,
+            "code_fence_count": formatting_counts.get("code_fence", 0),
+            "code_fence_rate": formatting_counts.get("code_fence", 0) / max(1, candidate_count),
+            "leading_by_count": formatting_counts.get("leading_by", 0),
+            "leading_by_rate": formatting_counts.get("leading_by", 0) / max(1, candidate_count),
+            "policy": "code_fences_are_stripped_and_logged",
+        },
         "collapse": summarize_lean_rows(rows),
         "split_status_counts": {split: dict(counts) for split, counts in by_bucket.items()},
         "static_row_count": len(static_records),
@@ -146,10 +162,34 @@ def main() -> None:
     parser.add_argument("--lean-cwd", default=None)
     parser.add_argument("--timeout-seconds", type=float, default=None)
     parser.add_argument("--register-data", action="store_true", help="Register synthetic or configured Lean data before loading.")
+    parser.add_argument("--static-corpus-path", default=None)
+    parser.add_argument("--mutation-bank-path", default=None)
+    parser.add_argument("--train-static-size", type=int, default=None)
+    parser.add_argument("--val-static-size", type=int, default=None)
+    parser.add_argument("--test-static-size", type=int, default=None)
+    parser.add_argument("--train-mutated-size", type=int, default=None)
+    parser.add_argument("--val-mutated-size", type=int, default=None)
+    parser.add_argument("--test-mutated-size", type=int, default=None)
     args = parser.parse_args()
 
     if args.register_data or not DatasetRegistry.dataset_exists(DATASET_NAME, args.split):
-        register_lean_prover_v1_data()
+        data_kwargs = {
+            key: value
+            for key, value in {
+                "train_static_size": args.train_static_size,
+                "val_static_size": args.val_static_size,
+                "test_static_size": args.test_static_size,
+                "train_mutated_size": args.train_mutated_size,
+                "val_mutated_size": args.val_mutated_size,
+                "test_mutated_size": args.test_mutated_size,
+            }.items()
+            if value is not None
+        }
+        register_lean_prover_v1_data(
+            static_corpus_path=args.static_corpus_path,
+            mutation_bank_path=args.mutation_bank_path,
+            **data_kwargs,
+        )
 
     dataset = DatasetRegistry.load_dataset(DATASET_NAME, args.split)
     if dataset is None:

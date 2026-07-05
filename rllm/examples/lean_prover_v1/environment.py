@@ -51,7 +51,11 @@ class LeanProofEnvironment(SingleTurnEnvironment):
     def from_dict(env_args: dict) -> LeanProofEnvironment:
         args = dict(env_args)
         task = args.pop("task", args.pop("task_info", None))
-        return LeanProofEnvironment(task=task, **args)
+        init_keys = {"lean_command", "lean_cwd", "timeout_seconds", "max_heartbeats"}
+        init_args = {key: args.pop(key) for key in list(args) if key in init_keys}
+        if task is None:
+            task = args
+        return LeanProofEnvironment(task=task, **init_args)
 
 
 def lean_prover_reward_for_eval(task: dict, action: Any) -> RewardOutput:

@@ -14,6 +14,7 @@ PROJECT_ROOT = REPO_ROOT.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from examples.lean_prover_v1.environment import LeanProofEnvironment
 from examples.lean_prover_v1.lean_worker import render_lean_source, verify_lean_proof
 from examples.lean_prover_v1.evaluate_lean_prover_v1 import evaluate_rows
 from examples.lean_prover_v1.mutate_bank import build_mutation_bank
@@ -180,6 +181,20 @@ def test_evaluator_logs_code_fence_and_leading_by_without_rejecting(tmp_path):
     assert report["formatting"]["code_fence_count"] == 1
     assert report["formatting"]["leading_by_count"] == 1
     assert report["formatting"]["policy"] == "code_fences_are_stripped_and_logged"
+
+
+def test_environment_from_dict_uses_flat_extra_info_as_task(tmp_path):
+    row = _row()
+    env = LeanProofEnvironment.from_dict({**row, "lean_command": str(_fake_lean(tmp_path)), "lean_cwd": str(tmp_path)})
+
+    observation, info = env.reset()
+    assert observation["question"] == row["question"]
+    assert info == {}
+
+    _, reward, done, task_info = env.step("exact True.intro")
+    assert reward == 1.0
+    assert done is True
+    assert task_info["id"] == row["id"]
 
 
 def test_mutation_filter_rejects_bad_candidates_and_accepts_hard_valid_candidate():
@@ -394,6 +409,7 @@ def test_synthetic_data_registers_all_requested_splits():
     assert len(splits["test_mutated"]) == 1
 
 
+
 def test_mutation_bank_keeps_synthetic_static_floor_when_no_static_corpus(tmp_path):
     mutation = normalize_lean_row(
         {
@@ -498,3 +514,5 @@ def test_generalization_summary_reports_base_trained_delta(tmp_path):
     assert report[0]["label"] == "large_drop"
     assert (run_root / "summary_metrics.csv").exists()
     assert (run_root / "degradation_report.md").exists()
+
+

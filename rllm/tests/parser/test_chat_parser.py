@@ -85,3 +85,26 @@ def test_parser_factory_with_disable_thinking():
 
     assert isinstance(parser, QwenChatTemplateParser)
     assert parser.disable_thinking is True
+
+
+def test_qwen_parser_skips_assistant_only_template_probe():
+    class Qwen35LikeTokenizer:
+        name_or_path = "Qwen/Qwen3.5-9B"
+        bos_token = None
+        eos_token = "<|im_end|>"
+
+        def __init__(self):
+            self.template_calls = []
+
+        def apply_chat_template(self, messages, **kwargs):
+            self.template_calls.append((messages, kwargs))
+            if not any(message["role"] == "user" for message in messages):
+                raise RuntimeError("No user query found in messages.")
+            return "<|im_start|>assistant\n"
+
+    tokenizer = Qwen35LikeTokenizer()
+    parser = QwenChatTemplateParser(tokenizer, disable_thinking=True)
+
+    assert tokenizer.template_calls == []
+    assert parser.generation_prompt == "<|im_start|>assistant\n<think>\n\n</think>\n\n"
+    assert parser.parse([{"role": "user", "content": "prove it"}], add_generation_prompt=True).endswith(parser.generation_prompt)

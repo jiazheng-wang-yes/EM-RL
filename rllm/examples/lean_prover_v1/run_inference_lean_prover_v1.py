@@ -3,20 +3,67 @@ from __future__ import annotations
 import argparse
 import gc
 import json
-import statistics
-import time
-from collections import Counter
+import os
 from pathlib import Path
 from typing import Any
 
+import torch
+
+from examples.lean_prover_v1.evaluate_lean_prover_v1 import evaluate_rows
 from examples.lean_prover_v1.probe_common import DATASET_NAME, register_lean_prover_v1_data, summarize_lean_rows
 from rllm.data.dataset import DatasetRegistry
 
 
-def _load_rows(split: str, args: argparse.Namespace) -> list[dict[str, Any]]:
+def _bool_arg(value: str | bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    lowered = value.strip().lower()
+    if lowered in {"1", "true", "yes", "y"}:
+        return True
+    if lowered in {"0", "false", "no", "n"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Expected boolean value, got {value!r}.")
+
+
+def _clear_cuda_cache() -> None:
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _apply_chat_template(tokenizer: Any, question: str, *, disable_thinking: bool) -> str:
+    if not getattr(tokenizer, "chat_template", None):
+        return question
+    messages = [{"role": "user", "content": question}]
+    kwargs = {
+        "tokenize": False,
+        "add_generation_prompt": True,
+    }
+    if disable_thinking:
+        kwargs["enable_thinking"] = False
+    try:
+        return tokenizer.apply_chat_template(messages, **kwargs)
+    except TypeError:
+        kwargs.pop("enable_thinking", None)
+        return tokenizer.apply_chat_template(messages, **kwargs)
+
+
+def _coerce_proof_body(text: str) -> str:
+    stripped = text.strip()
+    if "</think>" in stripped:
+        stripped = stripped.rsplit("</think>", 1)[-1].strip()
+    lines = []
+    for line in stripped.splitlines():
+        if line.strip().startswith("```"):
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def _load_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     register_lean_prover_v1_data(
-        static_corpus_path=args.static_corpus_path,
-        mutation_bank_path=args.mutation_bank_path,
+        static_corpus_path=args.static_corpus,
+        mutation_bank_path=args.mutation_bank,
+        allow_synthetic=args.allow_synthetic,
         train_static_size=args.train_static_size,
         val_static_size=args.val_static_size,
         test_static_size=args.test_static_size,
@@ -24,64 +71,26 @@ def _load_rows(split: str, args: argparse.Namespace) -> list[dict[str, Any]]:
         val_mutated_size=args.val_mutated_size,
         test_mutated_size=args.test_mutated_size,
     )
-    dataset = DatasetRegistry.load_dataset(DATASET_NAME, split)
+    dataset = DatasetRegistry.load_dataset(DATASET_NAME, args.split)
     if dataset is None:
-        raise RuntimeError(f"Dataset split not found: {DATASET_NAME}/{split}")
-    return list(dataset.get_data())
+        raise RuntimeError(f"Dataset split not found: {DATASET_NAME}/{args.split}")
+    rows = list(dataset.get_data())
+    if args.limit is not None:
+        rows = rows[: args.limit]
+    return rows
 
 
-def _is_static_row(row: dict[str, Any]) -> bool:
-    return str(row.get("mutation_type")) == "static" or str(row.get("split", "")).endswith("_static")
-
-
-def _select_rows(rows: list[dict[str, Any]], *, split: str, limit: int | None) -> list[dict[str, Any]]:
-    if limit is None or limit < 0 or len(rows) <= limit:
-        return rows
-    if split in {"train", "val", "test"}:
-        static_rows = [row for row in rows if _is_static_row(row)]
-        mutated_rows = [row for row in rows if not _is_static_row(row)]
-        static_count = min(len(static_rows), limit // 2)
-        mutated_count = min(len(mutated_rows), limit - static_count)
-        if static_count + mutated_count < limit:
-            static_count = min(len(static_rows), limit - mutated_count)
-        return static_rows[:static_count] + mutated_rows[:mutated_count]
-    return rows[:limit]
-
-
-def _chat_prompt(tokenizer: Any, row: dict[str, Any], *, disable_thinking: bool) -> str:
-    messages = [{"role": "user", "content": str(row["question"])}]
-    kwargs = {"tokenize": False, "add_generation_prompt": True}
-    if disable_thinking:
-        try:
-            return str(tokenizer.apply_chat_template(messages, **kwargs, enable_thinking=False))
-        except TypeError:
-            pass
-    if hasattr(tokenizer, "apply_chat_template") and getattr(tokenizer, "chat_template", None):
-        return str(tokenizer.apply_chat_template(messages, **kwargs))
-    return str(row["question"])
-
-
-def _clear_cuda_cache() -> None:
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except Exception:
-        pass
-    gc.collect()
-
-
-def _generate_vllm(
+def _generate_with_vllm(
+    rows: list[dict[str, Any]],
     *,
     model_source: str,
-    rows: list[dict[str, Any]],
     batch_size: int,
     max_model_len: int,
     max_new_tokens: int,
     temperature: float,
     top_p: float,
     num_samples: int,
+    tensor_parallel_size: int,
     gpu_memory_utilization: float,
     disable_thinking: bool,
 ) -> list[dict[str, Any]]:
@@ -92,213 +101,231 @@ def _generate_vllm(
         tokenizer=model_source,
         trust_remote_code=True,
         dtype="bfloat16",
-        tensor_parallel_size=1,
+        tensor_parallel_size=tensor_parallel_size,
         max_model_len=max_model_len,
         gpu_memory_utilization=gpu_memory_utilization,
         enforce_eager=True,
     )
     tokenizer = llm.get_tokenizer()
     sampling_params = SamplingParams(
+        n=num_samples,
         temperature=temperature,
         top_p=top_p,
         max_tokens=max_new_tokens,
-        n=max(1, num_samples),
     )
 
     records: list[dict[str, Any]] = []
     for start in range(0, len(rows), max(1, batch_size)):
         batch_rows = rows[start : start + max(1, batch_size)]
-        prompts = [_chat_prompt(tokenizer, row, disable_thinking=disable_thinking) for row in batch_rows]
+        prompts = [_apply_chat_template(tokenizer, str(row["question"]), disable_thinking=disable_thinking) for row in batch_rows]
         outputs = llm.generate(prompts, sampling_params, use_tqdm=False)
-        for row, output in zip(batch_rows, outputs, strict=False):
-            responses = [item.text for item in output.outputs]
-            finish_reasons = [str(item.finish_reason) for item in output.outputs]
-            records.append(_response_record(row, responses, finish_reasons))
+        for row, output in zip(batch_rows, outputs, strict=True):
+            responses = [_coerce_proof_body(item.text) for item in output.outputs]
+            records.append(
+                {
+                    "id": row["id"],
+                    "uid": row.get("uid", row["id"]),
+                    "split": row.get("split"),
+                    "mutation_type": row.get("mutation_type"),
+                    "responses": responses,
+                    "finish_reasons": [str(item.finish_reason) for item in output.outputs],
+                }
+            )
 
     del llm
     _clear_cuda_cache()
+    gc.collect()
     return records
 
 
-def _generate_transformers(
+def _generate_with_transformers(
+    rows: list[dict[str, Any]],
     *,
     model_source: str,
-    rows: list[dict[str, Any]],
     batch_size: int,
+    max_model_len: int,
     max_new_tokens: int,
     temperature: float,
     top_p: float,
     num_samples: int,
-    device: str,
     disable_thinking: bool,
 ) -> list[dict[str, Any]]:
-    import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(model_source, trust_remote_code=True, padding_side="left")
-    if tokenizer.pad_token_id is None:
+    tokenizer = AutoTokenizer.from_pretrained(model_source, trust_remote_code=True)
+    if tokenizer.pad_token_id is None and tokenizer.eos_token_id is not None:
         tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"
+
+    dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
     model = AutoModelForCausalLM.from_pretrained(
         model_source,
         trust_remote_code=True,
-        torch_dtype=torch.bfloat16 if device.startswith("cuda") and torch.cuda.is_available() else "auto",
-    ).to(device)
+        torch_dtype=dtype,
+        low_cpu_mem_usage=True,
+        device_map="auto" if torch.cuda.is_available() else None,
+    )
     model.eval()
 
-    records_by_id: dict[str, dict[str, Any]] = {}
-    for sample_idx in range(max(1, num_samples)):
-        for start in range(0, len(rows), max(1, batch_size)):
-            batch_rows = rows[start : start + max(1, batch_size)]
-            prompts = [_chat_prompt(tokenizer, row, disable_thinking=disable_thinking) for row in batch_rows]
-            encoded = tokenizer(prompts, return_tensors="pt", padding=True).to(model.device)
-            do_sample = temperature > 0
-            generate_kwargs: dict[str, Any] = {
-                "max_new_tokens": max_new_tokens,
-                "do_sample": do_sample,
-                "pad_token_id": tokenizer.pad_token_id,
-                "eos_token_id": tokenizer.eos_token_id,
-            }
-            if do_sample:
-                generate_kwargs.update({"temperature": temperature, "top_p": top_p})
-            with torch.no_grad():
-                generated = model.generate(**encoded, **generate_kwargs)
-            completions = generated[:, encoded["input_ids"].shape[1] :]
-            decoded = tokenizer.batch_decode(completions, skip_special_tokens=True)
-            for row, response in zip(batch_rows, decoded, strict=False):
-                record = records_by_id.setdefault(str(row["id"]), _response_record(row, [], []))
-                record["responses"].append(response)
-                record["finish_reasons"].append("unknown")
-            del generated
-            del encoded
-        if sample_idx + 1 < num_samples:
-            _clear_cuda_cache()
+    do_sample = temperature > 0
+    records: list[dict[str, Any]] = []
+    for start in range(0, len(rows), max(1, batch_size)):
+        batch_rows = rows[start : start + max(1, batch_size)]
+        prompts = [_apply_chat_template(tokenizer, str(row["question"]), disable_thinking=disable_thinking) for row in batch_rows]
+        encoded = tokenizer(
+            prompts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=max_model_len,
+        )
+        encoded = {key: value.to(model.device) for key, value in encoded.items()}
+        generation_kwargs: dict[str, Any] = {
+            "max_new_tokens": max_new_tokens,
+            "do_sample": do_sample,
+            "num_return_sequences": num_samples,
+            "pad_token_id": tokenizer.pad_token_id,
+        }
+        if do_sample:
+            generation_kwargs["temperature"] = temperature
+            generation_kwargs["top_p"] = top_p
+        with torch.no_grad():
+            generated = model.generate(**encoded, **generation_kwargs)
+        prompt_width = int(encoded["input_ids"].shape[1])
+        decoded_by_row: list[list[str]] = [[] for _ in batch_rows]
+        for idx, sequence in enumerate(generated):
+            row_idx = idx // num_samples
+            decoded = tokenizer.decode(sequence[prompt_width:], skip_special_tokens=True)
+            decoded_by_row[row_idx].append(_coerce_proof_body(decoded))
+        for row, responses in zip(batch_rows, decoded_by_row, strict=True):
+            records.append(
+                {
+                    "id": row["id"],
+                    "uid": row.get("uid", row["id"]),
+                    "split": row.get("split"),
+                    "mutation_type": row.get("mutation_type"),
+                    "responses": responses,
+                    "finish_reasons": [None for _ in responses],
+                }
+            )
+
+        del generated
+        del encoded
+        _clear_cuda_cache()
 
     del model
     del tokenizer
     _clear_cuda_cache()
-    return list(records_by_id.values())
-
-
-def _response_record(row: dict[str, Any], responses: list[str], finish_reasons: list[str]) -> dict[str, Any]:
-    return {
-        "id": str(row.get("id") or row.get("uid")),
-        "uid": str(row.get("uid") or row.get("id")),
-        "split": row.get("split"),
-        "mutation_type": row.get("mutation_type"),
-        "responses": responses,
-        "finish_reasons": finish_reasons,
-    }
+    gc.collect()
+    return records
 
 
 def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         for record in records:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            handle.write(json.dumps(record, ensure_ascii=True, sort_keys=True) + "\n")
 
 
-def _formatting_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
-    responses = [response for record in records for response in record.get("responses", [])]
-    starts = Counter(response.strip().split(None, 1)[0] if response.strip().split() else "<empty>" for response in responses)
-    lengths = [len(response.split()) for response in responses]
-    return {
-        "response_count": len(responses),
-        "empty_response_count": sum(1 for response in responses if not response.strip()),
-        "raw_code_fence_count": sum(1 for response in responses if response.strip().startswith("```")),
-        "raw_code_fence_rate": sum(1 for response in responses if response.strip().startswith("```")) / max(1, len(responses)),
-        "raw_leading_by_count": sum(1 for response in responses if response.strip().startswith("by")),
-        "raw_leading_by_rate": sum(1 for response in responses if response.strip().startswith("by")) / max(1, len(responses)),
-        "mean_response_tokens": statistics.mean(lengths) if lengths else 0.0,
-        "top_response_starts": starts.most_common(10),
-    }
+def _response_map(records: list[dict[str, Any]]) -> dict[str, list[str]]:
+    return {str(record["id"]): [str(item) for item in record.get("responses", [])] for record in records}
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate Lean prover v1 model responses.")
-    parser.add_argument("--model-source", required=True)
-    parser.add_argument("--backend", choices=["vllm", "transformers"], default="vllm")
-    parser.add_argument("--split", default="val")
-    parser.add_argument("--limit", type=int, default=-1)
-    parser.add_argument("--output", required=True, help="Responses JSONL path.")
-    parser.add_argument("--report-output", default=None)
-    parser.add_argument("--num-samples", type=int, default=1)
-    parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--max-model-len", type=int, default=3072)
-    parser.add_argument("--max-new-tokens", type=int, default=128)
-    parser.add_argument("--temperature", type=float, default=0.0)
-    parser.add_argument("--top-p", type=float, default=1.0)
-    parser.add_argument("--gpu-memory-utilization", type=float, default=0.75)
-    parser.add_argument("--device", default="cuda:0")
-    parser.add_argument("--disable-thinking", action="store_true")
-    parser.add_argument("--static-corpus-path", default=None)
-    parser.add_argument("--mutation-bank-path", default=None)
-    parser.add_argument("--train-static-size", type=int, default=1024)
-    parser.add_argument("--val-static-size", type=int, default=128)
-    parser.add_argument("--test-static-size", type=int, default=128)
-    parser.add_argument("--train-mutated-size", type=int, default=1024)
-    parser.add_argument("--val-mutated-size", type=int, default=128)
-    parser.add_argument("--test-mutated-size", type=int, default=128)
+    parser = argparse.ArgumentParser(description="Run Qwen inference and Lean verification for Lean prover v1.")
+    parser.add_argument("--model-source", default=os.getenv("MODEL_SOURCE", "Qwen/Qwen3.5-9B"))
+    parser.add_argument("--backend", choices=["vllm", "transformers"], default=os.getenv("LEAN_PROVER_V1_BACKEND", "vllm"))
+    parser.add_argument("--split", default=os.getenv("LEAN_PROVER_V1_SPLIT", "val"))
+    parser.add_argument("--limit", type=int, default=int(os.getenv("LEAN_PROVER_V1_LIMIT", "0")) or None)
+    parser.add_argument("--output-dir", default=os.getenv("OUTPUT_DIR", "/net/scratch/jiaweizhang/jiazhengw_migration/eval_runs/lean_prover_v1/inference_smoke"))
+    parser.add_argument("--responses-name", default="responses.jsonl")
+    parser.add_argument("--report-name", default="eval_report.json")
+    parser.add_argument("--batch-size", type=int, default=int(os.getenv("LEAN_PROVER_V1_BATCH_SIZE", "1")))
+    parser.add_argument("--max-model-len", type=int, default=int(os.getenv("LEAN_PROVER_V1_MAX_MODEL_LEN", "2048")))
+    parser.add_argument("--max-new-tokens", type=int, default=int(os.getenv("LEAN_PROVER_V1_MAX_NEW_TOKENS", "256")))
+    parser.add_argument("--temperature", type=float, default=float(os.getenv("LEAN_PROVER_V1_TEMPERATURE", "0.0")))
+    parser.add_argument("--top-p", type=float, default=float(os.getenv("LEAN_PROVER_V1_TOP_P", "1.0")))
+    parser.add_argument("--num-samples", type=int, default=int(os.getenv("LEAN_PROVER_V1_NUM_SAMPLES", "1")))
+    parser.add_argument("--tensor-parallel-size", type=int, default=int(os.getenv("LEAN_PROVER_V1_TP_SIZE", "1")))
+    parser.add_argument("--gpu-memory-utilization", type=float, default=float(os.getenv("LEAN_PROVER_V1_GPU_MEMORY_UTILIZATION", "0.75")))
+    parser.add_argument("--disable-thinking", type=_bool_arg, default=_bool_arg(os.getenv("DISABLE_THINKING", "true")))
+    parser.add_argument("--lean-command", default=os.getenv("LEAN_PROVER_V1_LEAN_COMMAND"))
+    parser.add_argument("--lean-cwd", default=os.getenv("LEAN_PROVER_V1_LEAN_CWD"))
+    parser.add_argument("--timeout-seconds", type=float, default=float(os.getenv("LEAN_PROVER_V1_TIMEOUT_SECONDS", "10")))
+    parser.add_argument("--static-corpus", default=os.getenv("LEAN_PROVER_V1_STATIC_CORPUS"))
+    parser.add_argument("--mutation-bank", default=os.getenv("LEAN_PROVER_V1_MUTATION_BANK"))
+    parser.add_argument("--allow-synthetic", type=_bool_arg, default=_bool_arg(os.getenv("LEAN_PROVER_V1_ALLOW_SYNTHETIC", "true")))
+    parser.add_argument("--train-static-size", type=int, default=int(os.getenv("LEAN_PROVER_V1_TRAIN_STATIC_SIZE", "32")))
+    parser.add_argument("--val-static-size", type=int, default=int(os.getenv("LEAN_PROVER_V1_VAL_STATIC_SIZE", "8")))
+    parser.add_argument("--test-static-size", type=int, default=int(os.getenv("LEAN_PROVER_V1_TEST_STATIC_SIZE", "8")))
+    parser.add_argument("--train-mutated-size", type=int, default=int(os.getenv("LEAN_PROVER_V1_TRAIN_MUTATED_SIZE", "32")))
+    parser.add_argument("--val-mutated-size", type=int, default=int(os.getenv("LEAN_PROVER_V1_VAL_MUTATED_SIZE", "8")))
+    parser.add_argument("--test-mutated-size", type=int, default=int(os.getenv("LEAN_PROVER_V1_TEST_MUTATED_SIZE", "8")))
     args = parser.parse_args()
 
-    rows = _select_rows(_load_rows(args.split, args), split=args.split, limit=args.limit)
-    started = time.monotonic()
+    rows = _load_rows(args)
+    output_dir = Path(args.output_dir)
+    responses_path = output_dir / args.responses_name
+    report_path = output_dir / args.report_name
+
     if args.backend == "vllm":
-        records = _generate_vllm(
+        records = _generate_with_vllm(
+            rows,
             model_source=args.model_source,
-            rows=rows,
             batch_size=args.batch_size,
             max_model_len=args.max_model_len,
             max_new_tokens=args.max_new_tokens,
             temperature=args.temperature,
             top_p=args.top_p,
             num_samples=args.num_samples,
+            tensor_parallel_size=args.tensor_parallel_size,
             gpu_memory_utilization=args.gpu_memory_utilization,
             disable_thinking=args.disable_thinking,
         )
     else:
-        records = _generate_transformers(
+        records = _generate_with_transformers(
+            rows,
             model_source=args.model_source,
-            rows=rows,
             batch_size=args.batch_size,
+            max_model_len=args.max_model_len,
             max_new_tokens=args.max_new_tokens,
             temperature=args.temperature,
             top_p=args.top_p,
             num_samples=args.num_samples,
-            device=args.device,
             disable_thinking=args.disable_thinking,
         )
 
-    output_path = Path(args.output)
-    _write_jsonl(output_path, records)
-    report = {
-        "artifacts": {"responses_jsonl": str(output_path)},
-        "model": {
-            "source": args.model_source,
-            "backend": args.backend,
-            "num_samples": args.num_samples,
-            "max_new_tokens": args.max_new_tokens,
-            "temperature": args.temperature,
-            "top_p": args.top_p,
-            "disable_thinking": args.disable_thinking,
-        },
-        "curriculum": {
-            "split": args.split,
-            "limit": args.limit,
-            "row_count": len(rows),
-            "static_sampling_floor_active": args.split in {"train", "val", "test"} and args.limit >= 0,
-            "summary": summarize_lean_rows(rows),
-        },
-        "generation": {
-            "elapsed_s": time.monotonic() - started,
-            **_formatting_summary(records),
-        },
+    _write_jsonl(responses_path, records)
+    report = evaluate_rows(
+        rows,
+        response_map=_response_map(records),
+        lean_command=args.lean_command,
+        lean_cwd=args.lean_cwd,
+        timeout_seconds=args.timeout_seconds,
+        max_k=args.num_samples,
+    )
+    report["model"] = {
+        "source": args.model_source,
+        "backend": args.backend,
+        "disable_thinking": args.disable_thinking,
+        "temperature": args.temperature,
+        "top_p": args.top_p,
+        "num_samples": args.num_samples,
+        "max_new_tokens": args.max_new_tokens,
     }
-    if args.report_output:
-        report_path = Path(args.report_output)
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    else:
-        print(json.dumps(report, indent=2, sort_keys=True))
+    report["curriculum"] = {
+        "split": args.split,
+        "limit": args.limit,
+        "summary": summarize_lean_rows(rows),
+        "static_sampling_floor_active": report.get("static_row_count", 0) > 0 and report.get("mutated_row_count", 0) > 0,
+    }
+    report["artifacts"] = {
+        "responses_jsonl": str(responses_path),
+        "report_json": str(report_path),
+    }
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(json.dumps(report, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

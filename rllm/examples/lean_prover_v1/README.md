@@ -4,6 +4,8 @@
 
 V1 uses full proof-block verification. Multi-turn tactic-state interaction through LeanDojo is reserved for V2 after the worker, dataset path, trainer, evaluator, and self-mutation bank are stable.
 
+For the active coding-agent handoff, including V2 Skill-Boundary Curriculum results and next implementation targets, read [`PROGRESS_README.md`](PROGRESS_README.md).
+
 ## Status
 
 Current version: **v1.3 strict async self-mutation**, updated on 2026-07-05.

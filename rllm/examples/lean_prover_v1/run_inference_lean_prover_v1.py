@@ -10,7 +10,12 @@ from typing import Any
 import torch
 
 from examples.lean_prover_v1.evaluate_lean_prover_v1 import evaluate_rows
-from examples.lean_prover_v1.probe_common import DATASET_NAME, register_lean_prover_v1_data, summarize_lean_rows
+from examples.lean_prover_v1.probe_common import (
+    DATASET_NAME,
+    load_direct_lean_rows,
+    register_lean_prover_v1_data,
+    summarize_lean_rows,
+)
 from rllm.data.dataset import DatasetRegistry
 
 
@@ -60,6 +65,13 @@ def _coerce_proof_body(text: str) -> str:
 
 
 def _load_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
+    direct_rows_path = getattr(args, "rows_path", None)
+    if direct_rows_path:
+        rows = load_direct_lean_rows(direct_rows_path)
+        if args.limit is not None and args.limit >= 0:
+            rows = rows[: args.limit]
+        return rows
+
     register_lean_prover_v1_data(
         static_corpus_path=args.static_corpus,
         mutation_bank_path=args.mutation_bank,
@@ -242,6 +254,7 @@ def main() -> None:
     parser.add_argument("--responses-name", default="responses.jsonl")
     parser.add_argument("--report-output", default=None, help="Alias for writing the report JSON to an exact path.")
     parser.add_argument("--report-name", default="eval_report.json")
+    parser.add_argument("--rows-output", default=None, help="Optional JSONL path for the exact rows used by this run.")
     parser.add_argument("--batch-size", type=int, default=int(os.getenv("LEAN_PROVER_V1_BATCH_SIZE", "1")))
     parser.add_argument("--max-model-len", type=int, default=int(os.getenv("LEAN_PROVER_V1_MAX_MODEL_LEN", "2048")))
     parser.add_argument("--max-new-tokens", type=int, default=int(os.getenv("LEAN_PROVER_V1_MAX_NEW_TOKENS", "256")))
@@ -255,6 +268,7 @@ def main() -> None:
     parser.add_argument("--lean-command", default=os.getenv("LEAN_PROVER_V1_LEAN_COMMAND"))
     parser.add_argument("--lean-cwd", default=os.getenv("LEAN_PROVER_V1_LEAN_CWD"))
     parser.add_argument("--timeout-seconds", type=float, default=float(os.getenv("LEAN_PROVER_V1_TIMEOUT_SECONDS", "10")))
+    parser.add_argument("--rows-path", "--direct-rows-path", dest="rows_path", default=os.getenv("LEAN_PROVER_V1_ROWS_PATH"))
     parser.add_argument("--static-corpus", "--static-corpus-path", dest="static_corpus", default=os.getenv("LEAN_PROVER_V1_STATIC_CORPUS"))
     parser.add_argument("--mutation-bank", "--mutation-bank-path", dest="mutation_bank", default=os.getenv("LEAN_PROVER_V1_MUTATION_BANK"))
     parser.add_argument("--allow-synthetic", type=_bool_arg, default=_bool_arg(os.getenv("LEAN_PROVER_V1_ALLOW_SYNTHETIC", "true")))
@@ -270,6 +284,9 @@ def main() -> None:
     output_dir = Path(args.output_dir)
     responses_path = Path(args.output) if args.output else output_dir / args.responses_name
     report_path = Path(args.report_output) if args.report_output else output_dir / args.report_name
+    rows_path = Path(args.rows_output) if args.rows_output else None
+    if rows_path is not None:
+        _write_jsonl(rows_path, rows)
 
     if args.backend == "vllm":
         records = _generate_with_vllm(
@@ -326,6 +343,8 @@ def main() -> None:
         "responses_jsonl": str(responses_path),
         "report_json": str(report_path),
     }
+    if rows_path is not None:
+        report["artifacts"]["rows_jsonl"] = str(rows_path)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2, sort_keys=True))

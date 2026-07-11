@@ -10,6 +10,7 @@ from typing import Any
 from examples.lean_prover_v1.lean_worker import verify_lean_proof
 from examples.lean_prover_v1.probe_common import (
     DATASET_NAME,
+    load_direct_lean_rows,
     proof_body_from_certificate,
     register_lean_prover_v1_data,
     summarize_lean_rows,
@@ -161,6 +162,7 @@ def main() -> None:
     parser.add_argument("--lean-command", default=None)
     parser.add_argument("--lean-cwd", default=None)
     parser.add_argument("--timeout-seconds", type=float, default=None)
+    parser.add_argument("--rows-path", "--direct-rows-path", dest="rows_path", default=None)
     parser.add_argument("--register-data", action="store_true", help="Register synthetic or configured Lean data before loading.")
     parser.add_argument("--static-corpus-path", default=None)
     parser.add_argument("--mutation-bank-path", default=None)
@@ -172,7 +174,9 @@ def main() -> None:
     parser.add_argument("--test-mutated-size", type=int, default=None)
     args = parser.parse_args()
 
-    if args.register_data or not DatasetRegistry.dataset_exists(DATASET_NAME, args.split):
+    if args.rows_path:
+        rows = load_direct_lean_rows(args.rows_path)
+    elif args.register_data or not DatasetRegistry.dataset_exists(DATASET_NAME, args.split):
         data_kwargs = {
             key: value
             for key, value in {
@@ -190,11 +194,15 @@ def main() -> None:
             mutation_bank_path=args.mutation_bank_path,
             **data_kwargs,
         )
-
-    dataset = DatasetRegistry.load_dataset(DATASET_NAME, args.split)
-    if dataset is None:
-        raise RuntimeError(f"Dataset split not found: {DATASET_NAME}/{args.split}")
-    rows = dataset.get_data()
+        dataset = DatasetRegistry.load_dataset(DATASET_NAME, args.split)
+        if dataset is None:
+            raise RuntimeError(f"Dataset split not found: {DATASET_NAME}/{args.split}")
+        rows = dataset.get_data()
+    else:
+        dataset = DatasetRegistry.load_dataset(DATASET_NAME, args.split)
+        if dataset is None:
+            raise RuntimeError(f"Dataset split not found: {DATASET_NAME}/{args.split}")
+        rows = dataset.get_data()
     report = evaluate_rows(
         rows,
         response_map=_load_response_map(args.responses_jsonl),

@@ -464,6 +464,14 @@ class AgentPPOTrainer(RayPPOTrainer):
                         val_metrics = self._validate_agent()
                         pprint(f"Final validation metrics: {val_metrics}")
                         logger.log(data=val_metrics, step=self.global_steps)
+                    if self.config.trainer.save_freq > 0:
+                        with marked_timer("final_save_checkpoint", timing_raw):
+                            self._save_checkpoint()
+                    local_dir = self.config.trainer.get("default_local_dir")
+                    if local_dir:
+                        os.makedirs(local_dir, exist_ok=True)
+                        with open(os.path.join(local_dir, "final_completed_training_step.txt"), "w", encoding="utf-8") as handle:
+                            handle.write(f"{int(self.global_steps)}\n")
                     return
 
     def _validate_agent(self):

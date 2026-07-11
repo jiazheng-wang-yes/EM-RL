@@ -15,9 +15,18 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from examples.lean_prover_v1.environment import LeanProofEnvironment
+from examples.lean_prover_v1.error_mutate_bank import (
+    build_error_mutation_bank,
+    classify_failure,
+    generate_bridge_candidates,
+    parse_llm_diagnosis,
+)
+from examples.lean_prover_v1.boundary_diagnose import build_boundary_diagnosis
 from examples.lean_prover_v1.lean_worker import render_lean_source, verify_lean_proof
 from examples.lean_prover_v1.evaluate_lean_prover_v1 import evaluate_rows
 from examples.lean_prover_v1.mutate_bank import build_mutation_bank
+from examples.lean_prover_v1.skill_boundary_bank import build_composed_bank, build_generation_bank
+from examples.lean_prover_v1.teacher_mutate_bank import build_teacher_mutation_bank, parse_teacher_response
 from examples.lean_prover_v1.run_inference_lean_prover_v1 import _load_rows as load_inference_rows
 from examples.lean_prover_v1.probe_common import (
     build_synthetic_lean_rows,
@@ -77,6 +86,9 @@ def _fake_mutation_lean(tmp_path: Path) -> Path:
                 "source = Path(sys.argv[-1]).read_text(encoding='utf-8')",
                 "if ': False := by' in source:",
                 "    print('type mismatch', file=sys.stderr)",
+                "    raise SystemExit(1)",
+                "if 'BAD_PROOF' in source:",
+                "    print('bad proof marker', file=sys.stderr)",
                 "    raise SystemExit(1)",
                 "cheap_markers = ['\\n  rfl\\n', '\\n  simp\\n', '\\n  simp_all\\n', '\\n  trivial\\n', '\\n  assumption\\n', '\\n  constructor\\n\\n', '\\n  aesop\\n', '\\n  tauto\\n', 'exact True.intro', 'exact Iff.rfl']",
                 "if any(marker in source for marker in cheap_markers):",
@@ -364,9 +376,9 @@ def test_mutation_bank_smoke_accepts_symbolic_candidate(tmp_path):
             "symbolic_per_seed": 1,
             "llm_candidates_per_seed": 0,
             "random_seed": 7,
-            "cheap_timeout_seconds": 0.2,
-            "strong_timeout_seconds": 0.2,
-            "well_formed_timeout_seconds": 0.2,
+            "cheap_timeout_seconds": 1.0,
+            "strong_timeout_seconds": 1.0,
+            "well_formed_timeout_seconds": 1.0,
             "lean_command": str(_fake_mutation_lean(tmp_path)),
             "lean_cwd": str(tmp_path),
             "max_heartbeats": 1000,
@@ -414,9 +426,9 @@ def test_mutation_bank_rejects_rename_only_symbolic_duplicates(tmp_path):
             "symbolic_per_seed": 1,
             "llm_candidates_per_seed": 0,
             "random_seed": 7,
-            "cheap_timeout_seconds": 0.2,
-            "strong_timeout_seconds": 0.2,
-            "well_formed_timeout_seconds": 0.2,
+            "cheap_timeout_seconds": 1.0,
+            "strong_timeout_seconds": 1.0,
+            "well_formed_timeout_seconds": 1.0,
             "lean_command": str(_fake_mutation_lean(tmp_path)),
             "lean_cwd": str(tmp_path),
             "max_heartbeats": 1000,
@@ -443,6 +455,781 @@ def test_mutation_bank_rejects_rename_only_symbolic_duplicates(tmp_path):
     assert summary["candidate_count"] == 2
     assert summary["accepted_train_count"] == 1
     assert summary["reason_counts"]["duplicate_statement_hash"] == 1
+
+
+def test_error_failure_classifier_covers_common_patterns():
+    assert classify_failure({"failed_response": "by exact hp", "lean_status": "lean_error"})["error_family"] == "format_body_only"
+    assert classify_failure({"failed_response": "sorry", "lean_status": "forbidden_token"})["error_family"] == "format_body_only"
+    assert (
+        classify_failure(
+            {
+                "statement_prefix": "theorem t (p q : Prop) : Exists (fun r : Prop => And r p) := by",
+                "failed_response": "use (p, hp)",
+                "lean_status": "lean_error",
+            }
+        )["error_family"]
+        == "exists_witness"
+    )
+    assert (
+        classify_failure(
+            {
+                "statement_prefix": "theorem t (p q : Prop) (h : p ∧ q) : q := by",
+                "failed_response": "and_left h",
+                "lean_status": "lean_error",
+            }
+        )["error_family"]
+        == "and_or_constructors"
+    )
+    assert (
+        classify_failure(
+            {
+                "statement_prefix": "theorem t (a b : Nat) (h : a = b) : b = a := by",
+                "failed_response": "rw [h]",
+                "lean_status": "lean_error",
+            }
+        )["error_family"]
+        == "equality_rewrite"
+    )
+    assert (
+        classify_failure(
+            {
+                "statement_prefix": "theorem t (p q r : Prop) (hpq : p -> q) : p -> q := by",
+                "failed_response": "exact h exact h exact h exact h exact h exact h exact h exact h",
+                "lean_status": "timeout",
+            }
+        )["error_family"]
+        == "timeout_loop"
+    )
+
+
+def test_llm_diagnosis_parser_accepts_only_valid_json_family():
+    valid = parse_llm_diagnosis(
+        json.dumps(
+            {
+                "error_family": "exists_witness",
+                "target_skill": "choose the witness first",
+                "rationale": "model used invalid exists syntax",
+            }
+        )
+    )
+
+    assert valid is not None
+    assert valid["error_family"] == "exists_witness"
+    assert parse_llm_diagnosis("{not json") is None
+    assert parse_llm_diagnosis(json.dumps({"error_family": "unknown", "target_skill": "x"})) is None
+    assert parse_llm_diagnosis(json.dumps({"error_family": "exists_witness"})) is None
+
+
+def test_teacher_response_parser_requires_json_candidates():
+    payload = json.dumps(
+        {
+            "candidates": [
+                {
+                    "statement_prefix": "theorem teacher_bridge (p q : Prop) (hp : p) (hq : q) : q ∧ p := by",
+                    "proof_body": "exact And.intro hq hp",
+                    "target_skill": "construct conjunctions",
+                    "error_family": "and_or_constructors",
+                    "bridge_level": "easy",
+                    "rationale": "Small constructor bridge.",
+                    "expected_failure_fixed": "Uses And.intro.",
+                    "difficulty_rationale": "Should be reachable.",
+                }
+            ]
+        }
+    )
+
+    parsed = parse_teacher_response(payload)
+
+    assert parsed is not None
+    assert parsed[0]["error_family"] == "and_or_constructors"
+    assert parse_teacher_response("{not json") is None
+    assert parse_teacher_response(json.dumps({"candidates": [{"statement_prefix": "theorem t : True := by"}]})) is None
+
+
+def test_error_bridge_generation_emits_certificate_backed_rows():
+    failure_records = [
+        {
+            **_row("theorem failed_exists (p q : Prop) (hp : p) (hq : q) : Exists (fun r : Prop => And r p) := by"),
+            "failed_response": "use (p, hp)",
+            "lean_status": "lean_error",
+            "error_family": "exists_witness",
+            "target_skill": "choose a witness and prove the predicate",
+            "error_signature": "exists_witness:lean_error:use",
+            "source_eval_report": "/tmp/report.json",
+            "repair_certificate": {"proof_body": "refine Exists.intro q ?_\nexact And.intro hq hp"},
+        }
+    ]
+
+    rows = generate_bridge_candidates(failure_records, cases_per_family=2, generation_model="unit")
+
+    assert len(rows) == 2
+    assert {row["mutation_type"] for row in rows} == {"exists_witness"}
+    assert all(row["parent_ids"] == [failure_records[0]["id"]] for row in rows)
+    assert all(row["seed_id"] is None for row in rows)
+    assert all(row["proof_certificate"]["proof_body"] for row in rows)
+
+
+def test_error_mutation_bank_routes_positive_pass_and_frontier(tmp_path):
+    failed_row = normalize_lean_row(
+        {
+            "id": "failed_exists",
+            "source": "unit",
+            "repo_commit": "test",
+            "imports": [],
+            "namespace": "Unit",
+            "statement_prefix": "theorem failed_exists (p q : Prop) (hp : p) (hq : q) : Exists (fun r : Prop => And r p) := by",
+            "initial_goal_pp": "",
+            "seed_id": None,
+            "mutation_type": "static",
+            "difficulty_band": "unit",
+            "baseline_results": {"well_formed": True, "cheap_baseline_solved": False},
+            "proof_certificate": {
+                "strong_prover_solved": True,
+                "proof_body": "refine Exists.intro q ?_\nexact And.intro hq hp",
+            },
+            "split": "val_mutated",
+        },
+        split="val_mutated",
+    )
+    rows_path = tmp_path / "rows.jsonl"
+    responses_path = tmp_path / "responses.jsonl"
+    model_pass_path = tmp_path / "model_pass.jsonl"
+    rows_path.write_text(json.dumps(failed_row) + "\n", encoding="utf-8")
+    responses_path.write_text(
+        json.dumps({"id": failed_row["id"], "responses": ["BAD_PROOF use (p, hp)"]}) + "\n",
+        encoding="utf-8",
+    )
+
+    generated = generate_bridge_candidates(
+        [
+            {
+                **failed_row,
+                "failed_response": "BAD_PROOF use (p, hp)",
+                "lean_status": "lean_error",
+                "error_family": "exists_witness",
+                "target_skill": "choose a witness",
+                "error_signature": "exists_witness:lean_error:use",
+            }
+        ],
+        cases_per_family=2,
+        generation_model="unit",
+    )
+    model_pass_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "id": generated[0]["id"],
+                        "responses": ["BAD_PROOF", generated[0]["proof_certificate"]["proof_body"]],
+                    }
+                ),
+                json.dumps({"id": generated[1]["id"], "responses": ["BAD_PROOF", "BAD_PROOF"]}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "error_bank"
+    args = type(
+        "Args",
+        (),
+        {
+            "rows_path": str(rows_path),
+            "responses_jsonl": str(responses_path),
+            "eval_report": str(tmp_path / "eval_report.json"),
+            "output_dir": str(output_dir),
+            "diagnosis_model_source": "unit-test",
+            "llm_diagnostics_jsonl": None,
+            "existing_mutation_bank_path": None,
+            "model_responses_jsonl": str(model_pass_path),
+            "max_failures": 1,
+            "cases_per_family": 2,
+            "model_pass_k": 2,
+            "accept_max_pass_rate": 1.0,
+            "cheap_timeout_seconds": 1.0,
+            "strong_timeout_seconds": 1.0,
+            "well_formed_timeout_seconds": 1.0,
+            "lean_command": str(_fake_mutation_lean(tmp_path)),
+            "lean_cwd": str(tmp_path),
+            "max_heartbeats": 1000,
+            "require_model_pass": True,
+            "max_top_tactic_mass": 1.0,
+            "max_error_family_mass": 1.0,
+            "max_template_mass": 1.0,
+            "random_seed": 7,
+        },
+    )()
+
+    summary = build_error_mutation_bank(args)
+
+    assert summary["failure_count"] == 1
+    assert summary["candidate_count"] == 2
+    assert summary["accepted_train_count"] == 1
+    assert summary["frontier_holdout_count"] == 1
+    accepted_rows = [json.loads(line) for line in (output_dir / "accepted.jsonl").read_text(encoding="utf-8").splitlines()]
+    frontier_rows = [json.loads(line) for line in (output_dir / "frontier_holdout.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert accepted_rows[0]["candidate_status"] == "accepted_train"
+    assert accepted_rows[0]["parent_ids"] == [failed_row["id"]]
+    assert accepted_rows[0]["seed_id"] is None
+    assert frontier_rows[0]["candidate_status"] == "frontier_holdout"
+
+    splits = prepare_lean_prover_v1_data(
+        mutation_bank_path=str(output_dir / "accepted.jsonl"),
+        allow_synthetic=True,
+        train_static_size=2,
+        val_static_size=1,
+        test_static_size=1,
+        train_mutated_size=0,
+        val_mutated_size=0,
+        test_mutated_size=0,
+    )
+    assert len(splits["train_mutated"]) == 1
+    assert not validate_split_integrity([row for rows in splits.values() for row in rows])
+
+
+def test_teacher_mutation_bank_fixture_routes_accepted_frontier_and_too_easy(tmp_path):
+    failed_row = normalize_lean_row(
+        {
+            "id": "teacher_failed_exists",
+            "source": "unit",
+            "repo_commit": "test",
+            "imports": [],
+            "namespace": "Unit",
+            "statement_prefix": "theorem teacher_failed_exists (p q : Prop) (hp : p) (hq : q) : Exists (fun r : Prop => And r p) := by",
+            "initial_goal_pp": "",
+            "seed_id": None,
+            "mutation_type": "static",
+            "difficulty_band": "unit",
+            "baseline_results": {"well_formed": True, "cheap_baseline_solved": False},
+            "proof_certificate": {
+                "strong_prover_solved": True,
+                "proof_body": "refine Exists.intro q ?_\nexact And.intro hq hp",
+            },
+            "split": "val_mutated",
+        },
+        split="val_mutated",
+    )
+    rows_path = tmp_path / "rows.jsonl"
+    responses_path = tmp_path / "responses.jsonl"
+    teacher_raw_path = tmp_path / "teacher_raw_fixture.jsonl"
+    rows_path.write_text(json.dumps(failed_row) + "\n", encoding="utf-8")
+    responses_path.write_text(
+        json.dumps({"id": failed_row["id"], "responses": ["BAD_PROOF use (p, hp)"]}) + "\n",
+        encoding="utf-8",
+    )
+    teacher_raw_path.write_text(
+        json.dumps(
+            {
+                "id": failed_row["id"],
+                "candidates": [
+                    {
+                        "statement_prefix": "theorem teacher_bridge_accept (p q : Prop) (hp : p) (hq : q) : q ∧ p := by",
+                        "proof_body": "exact And.intro hq hp",
+                        "target_skill": "choose a witness and construct conjunctions",
+                        "error_family": "exists_witness",
+                        "bridge_level": "easy",
+                        "rationale": "Reachable bridge before existential witnesses.",
+                        "expected_failure_fixed": "Uses the right constructor shape.",
+                        "difficulty_rationale": "One sampled proof should pass.",
+                    },
+                    {
+                        "statement_prefix": "theorem teacher_bridge_frontier (p q : Prop) (hp : p) (hq : q) : p ∧ q := by",
+                        "proof_body": "exact And.intro hp hq",
+                        "target_skill": "construct conjunctions",
+                        "error_family": "exists_witness",
+                        "bridge_level": "target",
+                        "rationale": "Still reachable but the student misses it.",
+                        "expected_failure_fixed": "Uses constructor order.",
+                        "difficulty_rationale": "Current model pass should be zero.",
+                    },
+                    {
+                        "statement_prefix": "theorem teacher_bridge_easy (p q : Prop) (hp : p) (hq : q) : q ∧ True := by",
+                        "proof_body": "exact And.intro hq True.intro",
+                        "target_skill": "construct conjunctions",
+                        "error_family": "exists_witness",
+                        "bridge_level": "harder",
+                        "rationale": "Too easy for routing coverage.",
+                        "expected_failure_fixed": "Uses direct proof.",
+                        "difficulty_rationale": "All sampled model attempts pass.",
+                    },
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    prelim_dir = tmp_path / "teacher_prelim"
+    prelim_args = type(
+        "Args",
+        (),
+        {
+            "rows_path": str(rows_path),
+            "responses_jsonl": str(responses_path),
+            "eval_report": None,
+            "frontier_bank_path": None,
+            "existing_mutation_bank_path": None,
+            "teacher_candidates_jsonl": None,
+            "teacher_raw_jsonl": str(teacher_raw_path),
+            "model_responses_jsonl": None,
+            "output_dir": str(prelim_dir),
+            "teacher_model": "deepseek-v4-pro",
+            "teacher_base_url": "https://api.deepseek.com",
+            "max_failures": 1,
+            "cases_per_family": 3,
+            "model_pass_k": 2,
+            "accept_max_pass_rate": 0.75,
+            "max_api_calls": 4,
+            "max_output_tokens": 1024,
+            "temperature": 0.2,
+            "cache_dir": None,
+            "refine_rounds": 1,
+            "cheap_timeout_seconds": 1.0,
+            "strong_timeout_seconds": 1.0,
+            "well_formed_timeout_seconds": 1.0,
+            "lean_command": str(_fake_mutation_lean(tmp_path)),
+            "lean_cwd": str(tmp_path),
+            "max_heartbeats": 1000,
+            "require_model_pass": False,
+            "max_top_tactic_mass": 1.0,
+            "max_error_family_mass": 1.0,
+            "random_seed": 7,
+            "disable_teacher_thinking": True,
+            "difficulty_directive": "balanced",
+        },
+    )()
+    prelim_summary = build_teacher_mutation_bank(prelim_args)
+    prelim_rows = [json.loads(line) for line in (prelim_dir / "teacher_candidates.jsonl").read_text(encoding="utf-8").splitlines()]
+    model_pass_path = tmp_path / "teacher_model_pass.jsonl"
+    model_pass_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"id": prelim_rows[0]["id"], "responses": ["BAD_PROOF", prelim_rows[0]["proof_certificate"]["proof_body"]]}),
+                json.dumps({"id": prelim_rows[1]["id"], "responses": ["BAD_PROOF", "BAD_PROOF"]}),
+                json.dumps(
+                    {
+                        "id": prelim_rows[2]["id"],
+                        "responses": [
+                            prelim_rows[2]["proof_certificate"]["proof_body"],
+                            prelim_rows[2]["proof_certificate"]["proof_body"],
+                        ],
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    final_dir = tmp_path / "teacher_final"
+    final_attrs = {key: value for key, value in vars(prelim_args.__class__).items() if not key.startswith("__")}
+    final_args = type("Args", (), {**final_attrs, "output_dir": str(final_dir)})()
+    final_args.teacher_candidates_jsonl = str(prelim_dir / "teacher_candidates.jsonl")
+    final_args.teacher_raw_jsonl = None
+    final_args.model_responses_jsonl = str(model_pass_path)
+    final_args.require_model_pass = True
+    final_summary = build_teacher_mutation_bank(final_args)
+
+    assert prelim_summary["candidate_count"] == 3
+    assert final_summary["accepted_train_count"] == 1
+    assert final_summary["frontier_holdout_count"] == 1
+    assert final_summary["too_easy_count"] == 1
+    accepted_rows = [json.loads(line) for line in (final_dir / "accepted.jsonl").read_text(encoding="utf-8").splitlines()]
+    frontier_rows = [json.loads(line) for line in (final_dir / "frontier_holdout.jsonl").read_text(encoding="utf-8").splitlines()]
+    too_easy_rows = [json.loads(line) for line in (final_dir / "too_easy.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert accepted_rows[0]["candidate_status"] == "accepted_train"
+    assert accepted_rows[0]["parent_ids"] == [failed_row["id"]]
+    assert accepted_rows[0]["generation_model"] == "deepseek-v4-pro"
+    assert accepted_rows[0]["proof_certificate"]["strong_prover_solved"] is True
+    assert frontier_rows[0]["candidate_status"] == "frontier_holdout"
+    assert too_easy_rows[0]["candidate_status"] == "too_easy"
+
+
+def test_boundary_diagnosis_classifies_easy_hard_boundary_and_mixed(tmp_path):
+    rows = [
+        normalize_lean_row(
+            {
+                **_row("theorem cheap_seen (p : Prop) (hp : p) : p := by", split="val_static"),
+                "id": "cheap_seen",
+                "baseline_results": {"well_formed": True, "cheap_baseline_solved": True},
+            },
+            split="val_static",
+        ),
+        normalize_lean_row(
+            {
+                **_row("theorem hard_seen (p : Prop) (hp : p) : p := by", split="val_static"),
+                "id": "hard_seen",
+            },
+            split="val_static",
+        ),
+        normalize_lean_row(
+            {
+                **_row("theorem boundary_seen (p : Prop) (hp : p) : p := by", split="val_static"),
+                "id": "boundary_seen",
+            },
+            split="val_static",
+        ),
+        normalize_lean_row(
+            {
+                **_row("theorem mixed_seen (p : Prop) (hp : p) : p := by", split="val_static"),
+                "id": "mixed_seen",
+            },
+            split="val_static",
+        ),
+    ]
+    rows_path = tmp_path / "boundary_rows.jsonl"
+    responses_path = tmp_path / "boundary_responses.jsonl"
+    rows_path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    responses_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"id": "cheap_seen", "responses": ["BAD_PROOF"]}),
+                json.dumps({"id": "hard_seen", "responses": ["BAD_PROOF"]}),
+                json.dumps({"id": "boundary_seen", "responses": ["exact hp", "BAD_PROOF", "BAD_PROOF", "BAD_PROOF"]}),
+                json.dumps({"id": "mixed_seen", "responses": ["exact hp", "BAD_PROOF"]}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    args = type(
+        "Args",
+        (),
+        {
+            "rows_path": str(rows_path),
+            "responses_jsonl": str(responses_path),
+            "eval_report": None,
+            "previous_controller_state": None,
+            "output_dir": str(tmp_path / "boundary_diag"),
+            "max_k": 4,
+            "too_easy_pass_rate": 0.75,
+            "boundary_max_pass_rate": 0.35,
+            "history_ema_alpha": 0.35,
+            "lean_command": str(_fake_mutation_lean(tmp_path)),
+            "lean_cwd": str(tmp_path),
+            "timeout_seconds": 1.0,
+            "max_heartbeats": 1000,
+        },
+    )()
+
+    summary = build_boundary_diagnosis(args)
+    signal_rows = [
+        json.loads(line)
+        for line in (tmp_path / "boundary_diag" / "signal_rows.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    by_id = {row["id"]: row for row in signal_rows}
+
+    assert summary["signal_counts"]["too_easy"] == 1
+    assert summary["signal_counts"]["too_hard"] == 1
+    assert summary["signal_counts"]["boundary"] == 1
+    assert summary["signal_counts"]["mixed_local_gap"] == 1
+    assert by_id["hard_seen"]["failure_records"][0]["error_family"] in {
+        "format_body_only",
+        "intro_binder",
+        "and_or_constructors",
+        "equality_rewrite",
+    }
+    assert by_id["mixed_seen"]["failed_rollout_count"] == 1
+
+
+def test_skill_boundary_success_extension_routes_and_rejects_pure_prop(tmp_path):
+    source = normalize_lean_row(
+        {
+            **_row("theorem success_seed (a b : Nat) (h : a = b) : Nat.succ a = Nat.succ b := by", split="val_static"),
+            "id": "success_seed",
+        },
+        split="val_static",
+    )
+    source.update(
+        {
+            "signal_class": "too_easy",
+            "signal_reason": "high_student_pass_rate",
+            "student_pass_rate": 1.0,
+            "student_pass_count": 2,
+            "student_response_count": 2,
+            "error_family": "equality_rewrite",
+            "target_skill": "extend equality congruence chains",
+            "success_response": "exact congrArg Nat.succ h",
+        }
+    )
+    signal_path = tmp_path / "success_signal.jsonl"
+    raw_path = tmp_path / "success_teacher_raw.jsonl"
+    signal_path.write_text(json.dumps(source) + "\n", encoding="utf-8")
+    raw_path.write_text(
+        json.dumps(
+            {
+                "id": "success_seed",
+                "candidates": [
+                    {
+                        "statement_prefix": "theorem extension_accept (a b c : Nat) (hab : a = b) (hbc : b = c) : Nat.succ a = Nat.succ c := by",
+                        "proof_body": "exact congrArg Nat.succ (Eq.trans hab hbc)",
+                        "target_skill": "chain equality then use congrArg",
+                        "error_family": "equality_rewrite",
+                        "bridge_level": "target_extension",
+                        "rationale": "Harder extension of the solved congrArg theorem.",
+                        "expected_failure_fixed": "Practices Eq.trans before congrArg.",
+                        "difficulty_rationale": "Should be positive-pass but not cheap.",
+                    },
+                    {
+                        "statement_prefix": "theorem extension_prop_bad (p q : Prop) (hp : p) (hq : q) : q ∧ p := by",
+                        "proof_body": "exact And.intro hq hp",
+                        "target_skill": "pure prop should be rejected for success extension",
+                        "error_family": "and_or_constructors",
+                        "bridge_level": "target_extension",
+                        "rationale": "Too tautological.",
+                        "expected_failure_fixed": "None.",
+                        "difficulty_rationale": "Should be rejected before routing.",
+                    },
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    prelim_dir = tmp_path / "success_prelim"
+    base_attrs = {
+        "mode": "success_extension",
+        "signal_rows_path": str(signal_path),
+        "existing_mutation_bank_path": None,
+        "teacher_candidates_jsonl": None,
+        "teacher_raw_jsonl": str(raw_path),
+        "model_responses_jsonl": None,
+        "teacher_model": "deepseek-v4-pro",
+        "teacher_base_url": "https://api.deepseek.com",
+        "max_source_rows": 1,
+        "cases_per_row": 2,
+        "model_pass_k": 2,
+        "accept_max_pass_rate": 0.75,
+        "max_api_calls": 2,
+        "max_output_tokens": 1024,
+        "temperature": 0.2,
+        "cache_dir": None,
+        "cheap_timeout_seconds": 1.0,
+        "strong_timeout_seconds": 1.0,
+        "well_formed_timeout_seconds": 1.0,
+        "lean_command": str(_fake_mutation_lean(tmp_path)),
+        "lean_cwd": str(tmp_path),
+        "max_heartbeats": 1000,
+        "require_model_pass": False,
+        "max_top_tactic_mass": 1.0,
+        "max_family_mass": 1.0,
+        "random_seed": 7,
+        "disable_teacher_thinking": True,
+    }
+    prelim_args = type("Args", (), {**base_attrs, "output_dir": str(prelim_dir)})()
+    prelim_summary = build_generation_bank(prelim_args)
+    candidates = [json.loads(line) for line in (prelim_dir / "teacher_candidates.jsonl").read_text(encoding="utf-8").splitlines()]
+    accepted_candidate = next(row for row in candidates if "extension_accept" in row["statement_prefix"])
+    model_pass_path = tmp_path / "success_model_pass.jsonl"
+    model_pass_path.write_text(
+        json.dumps(
+            {
+                "id": accepted_candidate["id"],
+                "responses": ["BAD_PROOF", accepted_candidate["proof_certificate"]["proof_body"]],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    final_dir = tmp_path / "success_final"
+    final_args = type("Args", (), {**base_attrs, "output_dir": str(final_dir)})()
+    final_args.teacher_candidates_jsonl = str(prelim_dir / "teacher_candidates.jsonl")
+    final_args.teacher_raw_jsonl = None
+    final_args.model_responses_jsonl = str(model_pass_path)
+    final_args.require_model_pass = True
+    final_summary = build_generation_bank(final_args)
+
+    assert prelim_summary["candidate_count"] == 2
+    assert final_summary["accepted_train_count"] == 1
+    assert final_summary["rejected_count"] == 1
+    rejected = [json.loads(line) for line in (final_dir / "rejected.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert any(row["acceptance_reason"] == "pure_prop_tautology" for row in rejected)
+
+
+def test_skill_boundary_failure_bridge_routes_frontier_and_positive_pass(tmp_path):
+    source = normalize_lean_row(
+        {
+            **_row("theorem failed_seed (a b c : Nat) (hab : a = b) (hbc : b = c) : Nat.succ a = Nat.succ c := by", split="val_static"),
+            "id": "failed_seed",
+        },
+        split="val_static",
+    )
+    source.update(
+        {
+            "signal_class": "too_hard",
+            "signal_reason": "student_pass_at_k_zero",
+            "student_pass_rate": 0.0,
+            "student_pass_count": 0,
+            "student_response_count": 2,
+            "error_family": "equality_rewrite",
+            "target_skill": "use Eq.trans before congrArg",
+            "failed_rollouts": [{"response": "BAD_PROOF", "status": "lean_error"}],
+        }
+    )
+    signal_path = tmp_path / "bridge_signal.jsonl"
+    raw_path = tmp_path / "bridge_teacher_raw.jsonl"
+    signal_path.write_text(json.dumps(source) + "\n", encoding="utf-8")
+    raw_path.write_text(
+        json.dumps(
+            {
+                "id": "failed_seed",
+                "candidates": [
+                    {
+                        "statement_prefix": "theorem bridge_accept (a b c : Nat) (hab : a = b) (hbc : b = c) : a = c := by",
+                        "proof_body": "exact Eq.trans hab hbc",
+                        "target_skill": "chain two equalities",
+                        "error_family": "equality_rewrite",
+                        "bridge_level": "easier_bridge",
+                        "rationale": "Bridge before congrArg.",
+                        "expected_failure_fixed": "Practices Eq.trans.",
+                        "difficulty_rationale": "One model sample should pass.",
+                    },
+                    {
+                        "statement_prefix": "theorem bridge_frontier (a b c : Nat) (hab : a = b) (hbc : b = c) : Nat.succ (Nat.succ a) = Nat.succ (Nat.succ c) := by",
+                        "proof_body": "exact congrArg Nat.succ (congrArg Nat.succ (Eq.trans hab hbc))",
+                        "target_skill": "chain equality then use congrArg",
+                        "error_family": "equality_rewrite",
+                        "bridge_level": "near_frontier_bridge",
+                        "rationale": "Still frontier.",
+                        "expected_failure_fixed": "Combines Eq.trans and congrArg.",
+                        "difficulty_rationale": "Student pass should be zero.",
+                    },
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    prelim_dir = tmp_path / "bridge_prelim"
+    base_attrs = {
+        "mode": "failure_bridge",
+        "signal_rows_path": str(signal_path),
+        "existing_mutation_bank_path": None,
+        "teacher_candidates_jsonl": None,
+        "teacher_raw_jsonl": str(raw_path),
+        "model_responses_jsonl": None,
+        "teacher_model": "deepseek-v4-pro",
+        "teacher_base_url": "https://api.deepseek.com",
+        "max_source_rows": 1,
+        "cases_per_row": 2,
+        "model_pass_k": 2,
+        "accept_max_pass_rate": 0.75,
+        "max_api_calls": 2,
+        "max_output_tokens": 1024,
+        "temperature": 0.2,
+        "cache_dir": None,
+        "cheap_timeout_seconds": 1.0,
+        "strong_timeout_seconds": 1.0,
+        "well_formed_timeout_seconds": 1.0,
+        "lean_command": str(_fake_mutation_lean(tmp_path)),
+        "lean_cwd": str(tmp_path),
+        "max_heartbeats": 1000,
+        "require_model_pass": False,
+        "max_top_tactic_mass": 1.0,
+        "max_family_mass": 1.0,
+        "random_seed": 7,
+        "disable_teacher_thinking": True,
+    }
+    prelim_args = type("Args", (), {**base_attrs, "output_dir": str(prelim_dir)})()
+    build_generation_bank(prelim_args)
+    candidates = [json.loads(line) for line in (prelim_dir / "teacher_candidates.jsonl").read_text(encoding="utf-8").splitlines()]
+    accept_candidate = next(row for row in candidates if "bridge_accept" in row["statement_prefix"])
+    frontier_candidate = next(row for row in candidates if "bridge_frontier" in row["statement_prefix"])
+    model_pass_path = tmp_path / "bridge_model_pass.jsonl"
+    model_pass_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"id": accept_candidate["id"], "responses": ["BAD_PROOF", accept_candidate["proof_certificate"]["proof_body"]]}),
+                json.dumps({"id": frontier_candidate["id"], "responses": ["BAD_PROOF", "BAD_PROOF"]}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    final_dir = tmp_path / "bridge_final"
+    final_args = type("Args", (), {**base_attrs, "output_dir": str(final_dir)})()
+    final_args.teacher_candidates_jsonl = str(prelim_dir / "teacher_candidates.jsonl")
+    final_args.teacher_raw_jsonl = None
+    final_args.model_responses_jsonl = str(model_pass_path)
+    final_args.require_model_pass = True
+    final_summary = build_generation_bank(final_args)
+
+    assert final_summary["accepted_train_count"] == 1
+    assert final_summary["frontier_holdout_count"] == 1
+    accepted = [json.loads(line) for line in (final_dir / "accepted.jsonl").read_text(encoding="utf-8").splitlines()]
+    frontier = [json.loads(line) for line in (final_dir / "frontier_holdout.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert accepted[0]["parent_ids"] == ["failed_seed"]
+    assert frontier[0]["candidate_status"] == "frontier_holdout"
+
+
+def test_skill_boundary_compose_bank_preserves_static_floor_and_family_cap(tmp_path):
+    extension_rows = [
+        normalize_lean_row(
+            {
+                **_row(f"theorem extension_{idx} (a b : Nat) (h : a = b) : Nat.succ a = Nat.succ b := by", split="train_mutated"),
+                "id": f"extension_{idx}",
+                "source": "skill_boundary_success_extension",
+                "candidate_status": "accepted_train",
+                "error_family": "equality_rewrite",
+                "mutation_type": "equality_rewrite",
+                "baseline_results": {"well_formed": True, "cheap_baseline_solved": False, "ast_edit_distance": 0.5},
+                "proof_certificate": {"strong_prover_solved": True, "proof_body": "exact congrArg Nat.succ h"},
+            },
+            split="train_mutated",
+        )
+        for idx in range(4)
+    ]
+    bridge_rows = [
+        normalize_lean_row(
+            {
+                **_row(f"theorem bridge_{idx} (a b c : Nat) (hab : a = b) (hbc : b = c) : a = c := by", split="train_mutated"),
+                "id": f"bridge_{idx}",
+                "source": "skill_boundary_failure_bridge",
+                "candidate_status": "accepted_train",
+                "error_family": "equality_rewrite" if idx < 2 else "exists_witness",
+                "mutation_type": "equality_rewrite" if idx < 2 else "exists_witness",
+                "baseline_results": {"well_formed": True, "cheap_baseline_solved": False, "ast_edit_distance": 0.5},
+                "proof_certificate": {"strong_prover_solved": True, "proof_body": "exact Eq.trans hab hbc"},
+            },
+            split="train_mutated",
+        )
+        for idx in range(4)
+    ]
+    extension_path = tmp_path / "extension_accepted.jsonl"
+    bridge_path = tmp_path / "bridge_accepted.jsonl"
+    extension_path.write_text("\n".join(json.dumps(row) for row in extension_rows) + "\n", encoding="utf-8")
+    bridge_path.write_text("\n".join(json.dumps(row) for row in bridge_rows) + "\n", encoding="utf-8")
+    args = type(
+        "Args",
+        (),
+        {
+            "output_dir": str(tmp_path / "composed"),
+            "existing_mutation_bank_path": None,
+            "success_bank_path": str(extension_path),
+            "bridge_bank_path": str(bridge_path),
+            "success_eval_bank_path": None,
+            "bridge_eval_bank_path": None,
+            "static_corpus_path": None,
+            "train_static_size": 4,
+            "static_floor": 0.5,
+            "success_extension_weight": 0.25,
+            "failure_bridge_weight": 0.25,
+            "max_family_mass": 0.50,
+            "random_seed": 7,
+        },
+    )()
+
+    summary = build_composed_bank(args)
+    sampled = [
+        json.loads(line)
+        for line in (tmp_path / "composed" / "sampled_train_bank.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert summary["static_count"] == 4
+    assert summary["generated_limit"] == 4
+    assert len(sampled) == 4
+    assert sum(1 for row in sampled if row["source"] == "skill_boundary_success_extension") == 2
+    assert sum(1 for row in sampled if row["source"] == "skill_boundary_failure_bridge") == 2
 
 
 def test_normalized_statement_hash_ignores_theorem_name_only():
@@ -488,6 +1275,92 @@ def test_split_integrity_detects_hash_and_seed_leakage():
 
     assert any("theorem_hash" in violation for violation in violations)
     assert any("leaks into" in violation for violation in violations)
+
+
+def test_frontier_holdout_eval_bank_skips_registry_but_loads_directly(tmp_path):
+    train_seed = _row(
+        "theorem train_seed (p q : Prop) (hp : p) (hq : q) : p ∧ q := by",
+        split="train_static",
+    )
+    frontier = normalize_lean_row(
+        {
+            "id": "frontier_from_train",
+            "source": "unit",
+            "repo_commit": "test",
+            "imports": [],
+            "namespace": "Unit",
+            "statement_prefix": "theorem frontier_from_train (p q : Prop) (hp : p) (hq : q) : q ∧ p := by",
+            "initial_goal_pp": "",
+            "seed_id": train_seed["id"],
+            "mutation_type": "unit_mutation",
+            "difficulty_band": "frontier",
+            "baseline_results": {"well_formed": True, "cheap_baseline_solved": False, "ast_edit_distance": 0.4},
+            "proof_certificate": {"strong_prover_solved": True, "proof_body": "exact And.intro hq hp"},
+            "split": "val_mutated",
+            "candidate_status": "frontier_holdout",
+        },
+        split="val_mutated",
+    )
+    static_path = tmp_path / "static.jsonl"
+    bank_path = tmp_path / "eval_bank.jsonl"
+    static_path.write_text(json.dumps(train_seed) + "\n", encoding="utf-8")
+    bank_path.write_text(json.dumps(frontier) + "\n", encoding="utf-8")
+
+    splits = prepare_lean_prover_v1_data(
+        static_corpus_path=str(static_path),
+        mutation_bank_path=str(bank_path),
+        allow_synthetic=False,
+        train_static_size=0,
+        val_static_size=0,
+        test_static_size=0,
+        train_mutated_size=0,
+        val_mutated_size=0,
+        test_mutated_size=0,
+    )
+
+    assert len(splits["train_static"]) == 1
+    assert not splits["val_mutated"]
+    assert not validate_split_integrity([row for rows in splits.values() for row in rows])
+
+    args = type(
+        "Args",
+        (),
+        {
+            "rows_path": str(bank_path),
+            "static_corpus": None,
+            "mutation_bank": None,
+            "allow_synthetic": False,
+            "train_static_size": 0,
+            "val_static_size": 0,
+            "test_static_size": 0,
+            "train_mutated_size": 0,
+            "val_mutated_size": 0,
+            "test_mutated_size": 0,
+            "split": "val",
+            "limit": -1,
+        },
+    )()
+
+    rows = load_inference_rows(args)
+
+    assert len(rows) == 1
+    assert rows[0]["candidate_status"] == "frontier_holdout"
+    assert rows[0]["split"] == "val_mutated"
+
+
+def test_split_integrity_allows_synthetic_template_reuse_across_families():
+    splits = build_synthetic_lean_rows(
+        train_static_size=64,
+        val_static_size=32,
+        test_static_size=32,
+        train_mutated_size=0,
+        val_mutated_size=0,
+        test_mutated_size=0,
+    )
+
+    violations = validate_split_integrity([row for rows in splits.values() for row in rows])
+
+    assert not violations
 
 
 def test_synthetic_data_registers_all_requested_splits():

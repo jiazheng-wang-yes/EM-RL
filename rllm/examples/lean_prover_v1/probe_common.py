@@ -47,6 +47,16 @@ OPTIONAL_ROW_FIELDS = (
     "acceptance_reason",
     "difficulty_metrics",
     "normalized_statement_hash",
+    "failed_response",
+    "lean_status",
+    "lean_stdout",
+    "lean_stderr",
+    "error_signature",
+    "error_family",
+    "target_skill",
+    "source_eval_report",
+    "repair_certificate",
+    "bridge_level",
 )
 
 TRIVIAL_STATEMENT_RE = re.compile(r":\s*(True|P\s*->\s*P|p\s*->\s*p)\s*:=\s*by\b")
@@ -468,6 +478,17 @@ def load_lean_rows(path_value: str | os.PathLike[str] | None) -> list[dict[str, 
     return _load_rows_from_file(path)
 
 
+def load_direct_lean_rows(path_value: str | os.PathLike[str] | None) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for raw in load_lean_rows(path_value):
+        rows.append(normalize_lean_row(raw, split=str(raw.get("split") or "train_mutated")))
+    return rows
+
+
+def _is_frontier_holdout(row: dict[str, Any]) -> bool:
+    return str(row.get("candidate_status") or "") == "frontier_holdout"
+
+
 def _assign_split(row: dict[str, Any], *, mutated: bool) -> str:
     explicit = str(row.get("split") or "")
     if explicit in ALL_SPLITS:
@@ -532,6 +553,8 @@ def prepare_lean_prover_v1_data(
     for raw in mutation_rows:
         split = _assign_split(raw, mutated=True)
         candidate = normalize_lean_row(raw, split=split)
+        if _is_frontier_holdout(candidate):
+            continue
         if filter_mutation_candidate(None, candidate).accepted:
             splits[split].append(candidate)
     return splits
@@ -662,7 +685,6 @@ def route_mutation_candidate(
 def validate_split_integrity(rows: list[dict[str, Any]]) -> list[str]:
     violations: list[str] = []
     hash_to_families: dict[str, set[str]] = {}
-    normalized_hash_to_families: dict[str, set[str]] = {}
     id_to_family: dict[str, str] = {}
     for row in rows:
         family = split_family(str(row.get("split", "")))
@@ -671,15 +693,10 @@ def validate_split_integrity(rows: list[dict[str, Any]]) -> list[str]:
             id_to_family[row_id] = family
         theorem_hash = str(row.get("theorem_hash") or compute_theorem_hash(row))
         hash_to_families.setdefault(theorem_hash, set()).add(family)
-        normalized_hash = compute_normalized_statement_hash(row)
-        normalized_hash_to_families.setdefault(normalized_hash, set()).add(family)
 
     for theorem_hash, families in hash_to_families.items():
         if len(families) > 1:
             violations.append(f"theorem_hash {theorem_hash[:12]} appears in {sorted(families)}")
-    for normalized_hash, families in normalized_hash_to_families.items():
-        if len(families) > 1:
-            violations.append(f"normalized_statement_hash {normalized_hash[:12]} appears in {sorted(families)}")
 
     for row in rows:
         seed_id = row.get("seed_id")

@@ -571,7 +571,8 @@ class AgentPPOTrainer(RayPPOTrainer):
 
         with marked_timer("transform_trajectory", timing_raw):
             # Transform the raw trajectories into DataProto format.
-            final_gen_batch_output, metrics = self._transform_agent_trajectories(trajectories)
+            phase = "val" if meta_info and meta_info.get("validate", False) else "train"
+            final_gen_batch_output, metrics = self._transform_agent_trajectories(trajectories, phase=phase)
         return final_gen_batch_output, metrics
 
     def generate_agent_steps(self, timing_raw=None, meta_info=None, uids=None):
@@ -599,7 +600,7 @@ class AgentPPOTrainer(RayPPOTrainer):
             final_gen_batch_output = self._transform_agent_steps(steps, uids=uids)
         return final_gen_batch_output
 
-    def _transform_agent_trajectories(self, trajectories: list[dict]):
+    def _transform_agent_trajectories(self, trajectories: list[dict], phase: str = "train"):
         """
         Helper function to transform a list of trajectories into tokenized DataProto format.
 
@@ -617,9 +618,11 @@ class AgentPPOTrainer(RayPPOTrainer):
         traj_scores = []
         chat_completions = []
         traj_metrics = []
+        reward_metadata = []
+        trajectory_audit_records = []
         metrics = {}
 
-        for traj in trajectories:
+        for trajectory_index, traj in enumerate(trajectories):
             prompt_tokens = traj["prompt_tokens"]
             response_tokens = traj["response_tokens"]
             # test if trajectory is empty
@@ -632,9 +635,32 @@ class AgentPPOTrainer(RayPPOTrainer):
             traj_scores.append(traj["trajectory_reward"])
             chat_completions.append(traj["chat_completions"])
             traj_metrics.append(traj["metrics"])
+            trajectory_reward_metadata = traj.get("reward_metadata", {})
+            if not isinstance(trajectory_reward_metadata, dict):
+                trajectory_reward_metadata = {}
+            reward_metadata.append(trajectory_reward_metadata)
+
+            assistant_response = ""
+            for message in reversed(traj["chat_completions"]):
+                if message.get("role") == "assistant":
+                    assistant_response = message.get("content", "")
+                    break
+            trajectory_audit_records.append(
+                {
+                    "global_step": self.global_steps,
+                    "phase": phase,
+                    "trajectory_index": trajectory_index,
+                    "environment_index": traj.get("idx"),
+                    "trajectory_reward": traj["trajectory_reward"],
+                    "termination_reason": traj.get("termination_reason"),
+                    "assistant_response": assistant_response,
+                    "reward_metadata": trajectory_reward_metadata,
+                }
+            )
 
         # Flatten traj_metrics into a dict of lists
-        traj_metrics = {k: [d[k] for d in traj_metrics] for k in traj_metrics[0]}
+        traj_metric_keys = set().union(*(d.keys() for d in traj_metrics))
+        traj_metrics = {k: [d.get(k) for d in traj_metrics] for k in traj_metric_keys}
         # Aggregate metrics (mean, min, max)
         for k, v_list in traj_metrics.items():
             v_list = [v for v in v_list if v is not None and v >= 0]
@@ -649,6 +675,21 @@ class AgentPPOTrainer(RayPPOTrainer):
                 }
             )
 
+        reward_metric_keys = set().union(*(d.keys() for d in reward_metadata))
+        for key in reward_metric_keys:
+            values = [record.get(key) for record in reward_metadata]
+            values = [float(value) for value in values if isinstance(value, (int, float, bool))]
+            if not values:
+                continue
+            values_array = np.asarray(values, dtype=np.float64)
+            metrics.update(
+                {
+                    f"reward_metadata/{key}_mean": values_array.mean(),
+                    f"reward_metadata/{key}_min": values_array.min(),
+                    f"reward_metadata/{key}_max": values_array.max(),
+                }
+            )
+
         # Save chat completions to a file
         save_dir = os.path.join(self.config.trainer.default_local_dir, "chat_completions")
         os.makedirs(save_dir, exist_ok=True)
@@ -656,6 +697,14 @@ class AgentPPOTrainer(RayPPOTrainer):
         with open(os.path.join(save_dir, f"{self.global_steps}.jsonl"), "w") as f:
             for chat_completion in chat_completions:
                 f.write(json.dumps(chat_completion) + "\n")
+
+        if any(reward_metadata):
+            audit_dir = os.path.join(self.config.trainer.default_local_dir, "trajectory_metrics")
+            os.makedirs(audit_dir, exist_ok=True)
+            audit_mode = "a" if phase == "val" else "w"
+            with open(os.path.join(audit_dir, f"{self.global_steps}_{phase}.jsonl"), audit_mode) as f:
+                for record in trajectory_audit_records:
+                    f.write(json.dumps(record) + "\n")
 
         # left pad prompts
         max_prompt_length = self.config.data.max_prompt_length

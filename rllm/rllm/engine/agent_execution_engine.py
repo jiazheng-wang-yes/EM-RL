@@ -396,6 +396,17 @@ class AgentExecutionEngine:
             return trajectory
         elif mode == "Token":
             prompt_tokens, response_tokens, response_masks, is_valid_trajectory = self.assemble_steps(episode_steps)
+            final_step_info = {}
+            if trajectory.steps:
+                final_step_info = trajectory.steps[-1].info or {}
+            reward_metadata = {}
+            if isinstance(final_step_info, dict):
+                candidate = final_step_info.get("reward_metadata", {})
+                if isinstance(candidate, dict):
+                    reward_metadata = dict(candidate)
+                    for identifier in ("task_id", "group_id"):
+                        if identifier in final_step_info:
+                            reward_metadata.setdefault(identifier, final_step_info[identifier])
             token_result = {
                 "prompt_tokens": prompt_tokens,
                 "response_tokens": response_tokens,
@@ -403,6 +414,8 @@ class AgentExecutionEngine:
                 "trajectory_reward": trajectory.reward,
                 "idx": env.idx,
                 "chat_completions": agent.chat_completions,
+                "reward_metadata": reward_metadata,
+                "termination_reason": termination_reason,
                 "metrics": {
                     # Total number of steps taken in the trajectory
                     "steps": len(trajectory.steps),

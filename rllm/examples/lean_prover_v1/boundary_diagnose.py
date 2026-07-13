@@ -83,8 +83,19 @@ def _baseline_cheap_solved(row: dict[str, Any]) -> bool:
     return bool(isinstance(metrics, dict) and metrics.get("cheap_baseline_solved") is True)
 
 
+def _goal_text(row: dict[str, Any]) -> str:
+    formal_type = str(row.get("formal_type") or "").strip()
+    if formal_type:
+        return formal_type.lower()
+    statement = str(row.get("statement_prefix") or "")
+    before_proof = statement.rsplit(":= by", 1)[0]
+    if " : " in before_proof:
+        before_proof = before_proof.rsplit(" : ", 1)[-1]
+    return f"{before_proof}\n{row.get('initial_goal_pp') or ''}".lower()
+
+
 def _infer_success_family(row: dict[str, Any]) -> tuple[str, str]:
-    text = f"{row.get('statement_prefix') or ''}\n{row.get('initial_goal_pp') or ''}".lower()
+    text = _goal_text(row)
     if "exists" in text or "∃" in text:
         return "exists_witness", "extend witness selection and witness predicate proof"
     if "=" in text or "nat." in text or "rw" in text or "congr" in text:
@@ -125,6 +136,17 @@ def _verify_responses(
             timeout_seconds=config.timeout_seconds,
             max_heartbeats=config.max_heartbeats,
         )
+        timeout_retried = False
+        if result.status == "timeout":
+            timeout_retried = True
+            result = verify_lean_proof(
+                row,
+                response,
+                lean_command=config.lean_command,
+                lean_cwd=config.lean_cwd,
+                timeout_seconds=config.timeout_seconds,
+                max_heartbeats=config.max_heartbeats,
+            )
         verified.append(
             {
                 "index": index,
@@ -135,6 +157,7 @@ def _verify_responses(
                 "stderr": _short_text(result.stderr),
                 "stripped_code_fence": bool(result.metadata.get("stripped_code_fence")),
                 "stripped_leading_by": bool(result.metadata.get("stripped_leading_by")),
+                "timeout_retried": timeout_retried,
                 "response": response,
             }
         )

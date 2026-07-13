@@ -60,6 +60,27 @@ def test_projection_summary_shapes_and_masks():
     assert torch.allclose(summary["em_projection_l0_response_mean"], torch.tensor([2.5, 5.0]))
 
 
+def test_named_vector_projection_keys():
+    runtime = EMVectorRuntime(
+        vectors={0: normalize_vector(torch.tensor([1.0, 0.0]))},
+        layers=[0],
+        named_vectors={
+            "shared": {0: normalize_vector(torch.tensor([1.0, 0.0]))},
+            "specific": {0: normalize_vector(torch.tensor([0.0, 1.0]))},
+        },
+        named_layers={"shared": [0], "specific": [0]},
+    )
+    projections = {
+        ("shared", 0): torch.tensor([[0.0, 1.0, 2.0, 3.0]]),
+        ("specific", 0): torch.tensor([[0.0, 1.0, 4.0, 6.0]]),
+    }
+    summary = runtime.summarize_full_sequence(projections, response_length=2)
+    assert "em_projection_shared_l0_response_mean" in summary
+    assert "em_projection_specific_l0_response_mean" in summary
+    assert torch.allclose(summary["em_projection_shared_l0_response_mean"], torch.tensor([2.5]))
+    assert torch.allclose(summary["em_projection_specific_l0_response_mean"], torch.tensor([5.0]))
+
+
 def test_add_and_ablate_intervention_modes():
     hidden = torch.zeros(1, 1, 2)
     model = TinyModel()

@@ -31,6 +31,7 @@ from examples.lean_prover_v1.probe_common import (
     load_direct_lean_rows,
     load_lean_rows,
     normalize_lean_row,
+    normalize_statement_for_hash,
     summarize_lean_rows,
 )
 
@@ -56,6 +57,43 @@ UNSAFE_TEXT_RE = re.compile(
     flags=re.MULTILINE,
 )
 FORBIDDEN_PROOF_TOKEN_RE = re.compile(r"\b(sorry|admit|unsafe)\b")
+
+TEACHER_METADATA_FIELDS = (
+    "parent_ids",
+    "failed_response",
+    "lean_status",
+    "lean_stdout",
+    "lean_stderr",
+    "error_signature",
+    "error_family",
+    "target_skill",
+    "source_eval_report",
+    "repair_certificate",
+    "bridge_level",
+    "mutation_source",
+    "mutation_rule",
+    "generation_model",
+    "verified_prefix",
+    "failing_step",
+    "remaining_goal_pp",
+    "failing_proof_line",
+    "failing_source_line",
+    "failing_column",
+    "local_goal_hash",
+    "source_statement_hash",
+    "source_statement_shape_hash",
+    "stepwise_status",
+    "stepwise_metadata",
+)
+
+FAMILY_REPAIR_CONSTRAINTS = {
+    "format_body_only": "Use body-only Lean syntax. Do not include a leading by or any declaration in proof_body.",
+    "intro_binder": "Require at least one binder introduction or function application; the conclusion must not be an available hypothesis.",
+    "and_or_constructors": "Require a conjunction/disjunction constructor, projection, or case split; do not make the conclusion an available hypothesis.",
+    "exists_witness": "Require an explicit existential witness and a nontrivial witness obligation.",
+    "equality_rewrite": "Require rw [...], Eq.trans, congrArg, or simpa only [...] in the certificate; the goal must not exactly match a hypothesis.",
+    "timeout_loop": "Use a short deterministic proof with a bounded sequence of distinct tactics and no repeat loops.",
+}
 
 
 @dataclass(slots=True)
@@ -84,6 +122,7 @@ class TeacherMutationConfig:
     random_seed: int = 1337
     disable_teacher_thinking: bool = True
     difficulty_directive: str = "balanced"
+    allow_stepwise_cheap_solved: bool = True
 
 
 def _jsonish(value: Any) -> Any:
@@ -255,6 +294,11 @@ def _parse_teacher_response_with_errors(text: str) -> tuple[list[dict[str, Any]]
 
 
 def _load_failure_records(args: argparse.Namespace, config: TeacherMutationConfig) -> list[dict[str, Any]]:
+    failure_records_path = getattr(args, "failure_records_jsonl", None)
+    if failure_records_path:
+        return _read_jsonl(failure_records_path)[: config.max_failures]
+    if not args.rows_path or not args.responses_jsonl:
+        raise ValueError("--rows-path and --responses-jsonl are required without --failure-records-jsonl")
     rows = load_direct_lean_rows(args.rows_path)
     response_map = _load_response_map(args.responses_jsonl)
     report_path = str(args.eval_report or "")
@@ -308,6 +352,50 @@ def _compact_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _strip_balanced_outer_parens(value: str) -> str:
+    value = value.strip()
+    while value.startswith("(") and value.endswith(")"):
+        depth = 0
+        closes_at_end = True
+        for index, char in enumerate(value):
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0 and index != len(value) - 1:
+                    closes_at_end = False
+                    break
+        if depth != 0 or not closes_at_end:
+            break
+        value = value[1:-1].strip()
+    return value
+
+
+def _statement_shape_hash(row: dict[str, Any]) -> str:
+    statement = normalize_statement_for_hash(str(row.get("statement_prefix") or ""))
+    declaration = statement.removesuffix(" := by")
+    depths = {"(": 0, "[": 0, "{": 0}
+    closing = {")": "(", "]": "[", "}": "{"}
+    for index, char in enumerate(declaration):
+        if char in depths:
+            depths[char] += 1
+        elif char in closing:
+            opener = closing[char]
+            depths[opener] = max(0, depths[opener] - 1)
+        elif char == ":" and not any(depths.values()):
+            head = declaration[:index].strip()
+            target = declaration[index + 1 :].strip()
+            statement = f"{head} : {_strip_balanced_outer_parens(target)} := by"
+            break
+    payload = {
+        "imports": row.get("imports") or [],
+        "namespace": row.get("namespace") or "",
+        "repo_commit": row.get("repo_commit") or "",
+        "statement_shape": statement,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=True).encode("utf-8")).hexdigest()
+
+
 def build_teacher_messages(
     failure: dict[str, Any],
     *,
@@ -320,6 +408,10 @@ def build_teacher_messages(
     target_skill = str(failure.get("target_skill") or "")
     system = (
         "You are a Lean 4 curriculum generator. Return strict json only. "
+        "When a stepwise local goal is provided, generate standalone repair lemmas that teach the missing next proof step; "
+        "do not simply restate or wrap the full source theorem. Generalize concrete constants into variables where possible. "
+        "Make every candidate a distinct proposition and change the proposition structurally at each bridge level. "
+        "Theorem renames are duplicates because names are ignored during deduplication. "
         "Every candidate must be a theorem statement ending with ':= by' and a separate proof body. "
         "Do not emit imports, namespace declarations, top-level declarations inside proof bodies, sorry, admit, unsafe, "
         "trivial True targets, theorem renames, or proof bodies inside statement_prefix."
@@ -348,6 +440,10 @@ def build_teacher_messages(
         },
         "requested_ladder": ["easier_bridge", "target_bridge", "harder_variant"],
         "cases_requested": config.cases_per_family,
+        "family_repair_constraint": FAMILY_REPAIR_CONSTRAINTS.get(
+            family,
+            "The proof certificate must exercise the target skill and the conclusion must not already be an available hypothesis.",
+        ),
         "failure": {
             "row": _compact_row(failure),
             "failed_response": _short_text(str(failure.get("failed_response") or ""), 1200),
@@ -358,6 +454,11 @@ def build_teacher_messages(
             "error_family": family,
             "target_skill": target_skill,
             "repair_certificate": failure.get("repair_certificate"),
+            "verified_prefix": _short_text(str(failure.get("verified_prefix") or ""), 1600),
+            "failing_step": _short_text(str(failure.get("failing_step") or ""), 800),
+            "remaining_goal_pp": _short_text(str(failure.get("remaining_goal_pp") or ""), 2400),
+            "failing_proof_line": failure.get("failing_proof_line"),
+            "local_goal_hash": failure.get("local_goal_hash"),
         },
         "recent_bank_summary": recent_bank_summary,
         "source_eval_metrics": _source_eval_metrics(eval_report),
@@ -472,8 +573,7 @@ def teacher_spec_to_row(
     proof_body = str(spec.get("proof_body") or "").strip()
     statement_hash = hashlib.sha1(statement_prefix.encode("utf-8")).hexdigest()[:10]
     row_id = f"{failure_id}__teacher_mut_{_safe_ident(family)}_{_safe_ident(bridge_level)}_{candidate_index}_{statement_hash}"
-    return normalize_lean_row(
-        {
+    raw_row = {
             "id": row_id,
             "source": "teacher_conditioned_mutation",
             "repo_commit": failure.get("repo_commit") or DEFAULT_REPO_COMMIT,
@@ -510,10 +610,24 @@ def teacher_spec_to_row(
             "target_skill": str(spec.get("target_skill") or failure.get("target_skill") or ""),
             "source_eval_report": failure.get("source_eval_report"),
             "repair_certificate": failure.get("repair_certificate"),
+            "verified_prefix": failure.get("verified_prefix"),
+            "failing_step": failure.get("failing_step"),
+            "remaining_goal_pp": failure.get("remaining_goal_pp"),
+            "failing_proof_line": failure.get("failing_proof_line"),
+            "local_goal_hash": failure.get("local_goal_hash"),
+            "failing_source_line": failure.get("failing_source_line"),
+            "failing_column": failure.get("failing_column"),
+            "stepwise_status": failure.get("stepwise_status"),
+            "stepwise_metadata": failure.get("stepwise_metadata"),
+            "source_statement_hash": compute_normalized_statement_hash(failure),
+            "source_statement_shape_hash": _statement_shape_hash(failure),
             "bridge_level": bridge_level,
-        },
-        split="train_mutated",
-    )
+        }
+    row = normalize_lean_row(raw_row, split="train_mutated")
+    for field in TEACHER_METADATA_FIELDS:
+        if raw_row.get(field) is not None:
+            row[field] = raw_row[field]
+    return row
 
 
 def generate_teacher_candidates(
@@ -595,7 +709,11 @@ def _load_teacher_candidates(path: str | None) -> list[dict[str, Any]]:
         row.setdefault("mutation_source", "teacher_conditioned")
         row.setdefault("generation_model", row.get("generation_model") or DEFAULT_TEACHER_MODEL)
         row.setdefault("split", "train_mutated")
-        rows.append(normalize_lean_row(row, split="train_mutated"))
+        normalized = normalize_lean_row(row, split="train_mutated")
+        for field in TEACHER_METADATA_FIELDS:
+            if row.get(field) is not None:
+                normalized[field] = row[field]
+        rows.append(normalized)
     return rows
 
 
@@ -608,6 +726,11 @@ def _evaluate_teacher_candidates(
     config: TeacherMutationConfig,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     seen_hashes = {compute_normalized_statement_hash(row) for row in existing_bank}
+    seen_hashes.update(str(row.get("source_statement_hash")) for row in candidates if row.get("source_statement_hash"))
+    seen_shape_hashes = {_statement_shape_hash(row) for row in existing_bank}
+    seen_shape_hashes.update(
+        str(row.get("source_statement_shape_hash")) for row in candidates if row.get("source_statement_shape_hash")
+    )
     evaluated: list[dict[str, Any]] = []
     accepted: list[dict[str, Any]] = []
     frontier_holdout: list[dict[str, Any]] = []
@@ -620,6 +743,18 @@ def _evaluate_teacher_candidates(
             rejected.append(candidate)
             continue
 
+        statement_shape_hash = _statement_shape_hash(candidate)
+        if statement_shape_hash in seen_shape_hashes:
+            duplicate = normalize_lean_row(candidate, split="train_mutated")
+            for field in TEACHER_METADATA_FIELDS:
+                if candidate.get(field) is not None:
+                    duplicate[field] = candidate[field]
+            duplicate["candidate_status"] = "rejected"
+            duplicate["acceptance_reason"] = "duplicate_statement_shape"
+            evaluated.append(duplicate)
+            rejected.append(duplicate)
+            continue
+
         row_id = str(candidate.get("id") or candidate.get("uid"))
         evaluated_row = evaluate_mutation_candidate(
             None,
@@ -628,22 +763,7 @@ def _evaluate_teacher_candidates(
             model_responses=response_map.get(row_id),
             config=mutation_config,
         )
-        for field in (
-            "parent_ids",
-            "failed_response",
-            "lean_status",
-            "lean_stdout",
-            "lean_stderr",
-            "error_signature",
-            "error_family",
-            "target_skill",
-            "source_eval_report",
-            "repair_certificate",
-            "bridge_level",
-            "mutation_source",
-            "mutation_rule",
-            "generation_model",
-        ):
+        for field in TEACHER_METADATA_FIELDS:
             if field in candidate:
                 evaluated_row[field] = candidate.get(field)
 
@@ -653,12 +773,17 @@ def _evaluate_teacher_candidates(
         if status == "accepted_train":
             accepted.append(evaluated_row)
             seen_hashes.add(compute_normalized_statement_hash(evaluated_row))
+            seen_shape_hashes.add(statement_shape_hash)
         elif status == "frontier_holdout":
             frontier_holdout.append(evaluated_row)
             rejected.append(evaluated_row)
+            seen_hashes.add(compute_normalized_statement_hash(evaluated_row))
+            seen_shape_hashes.add(statement_shape_hash)
         elif status == "too_easy" or reason.startswith(("cheap_solved", "too_easy_")):
             evaluated_row["candidate_status"] = "too_easy"
             too_easy.append(evaluated_row)
+            seen_hashes.add(compute_normalized_statement_hash(evaluated_row))
+            seen_shape_hashes.add(statement_shape_hash)
         else:
             rejected.append(evaluated_row)
 
@@ -725,11 +850,13 @@ def _summary(
         if isinstance(_jsonish(row.get("baseline_results")), dict)
         and "cheap_baseline_solved" in _jsonish(row.get("baseline_results"))
     ]
-    verified = [
-        bool(_jsonish(row.get("proof_certificate")).get("strong_prover_solved"))
+    certificate_attempts = [
+        _jsonish(row.get("proof_certificate"))
         for row in evaluated
         if isinstance(_jsonish(row.get("proof_certificate")), dict)
+        and "verification_results" in _jsonish(row.get("proof_certificate"))
     ]
+    verified = [bool(certificate.get("strong_prover_solved")) for certificate in certificate_attempts]
     bridge_counts = Counter(str(row.get("bridge_level") or "unknown") for row in evaluated)
     refinement_requests = _refinement_requests(evaluated, config=config)
     return {
@@ -752,6 +879,12 @@ def _summary(
         "cache_hit_rate": float(api_stats.get("cache_hits") or 0) / max(1, len(raw_records)),
         "json_parse_failure_rate": float(api_stats.get("json_parse_errors") or 0) / max(1, len(raw_records)),
         "unsafe_rejection_rate": reason_counts.get("forbidden_proof_token", 0) / max(1, len(evaluated)),
+        "precheck_rejected_count": sum(
+            count
+            for reason, count in reason_counts.items()
+            if reason in {"duplicate_statement_hash", "duplicate_statement_shape", "noop_statement", "trivial_statement"}
+        ),
+        "certificate_verification_attempt_count": len(certificate_attempts),
         "lean_verification_rate": sum(verified) / max(1, len(verified)),
         "well_formed_rate": sum(well_formed) / max(1, len(well_formed)),
         "cheap_solved_rate": sum(cheap_solved) / max(1, len(cheap_solved)),
@@ -789,6 +922,7 @@ def _summary(
             "max_top_tactic_mass": config.max_top_tactic_mass,
             "max_error_family_mass": config.max_error_family_mass,
             "difficulty_directive": config.difficulty_directive,
+            "allow_stepwise_cheap_solved": config.allow_stepwise_cheap_solved,
         },
     }
 
@@ -819,6 +953,7 @@ def build_teacher_mutation_bank(args: argparse.Namespace) -> dict[str, Any]:
         random_seed=args.random_seed,
         disable_teacher_thinking=args.disable_teacher_thinking,
         difficulty_directive=args.difficulty_directive,
+        allow_stepwise_cheap_solved=getattr(args, "allow_stepwise_cheap_solved", True),
     )
     output_dir = config.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -858,6 +993,7 @@ def build_teacher_mutation_bank(args: argparse.Namespace) -> dict[str, Any]:
         max_top_tactic_mass=config.max_top_tactic_mass,
         max_mutation_type_mass=config.max_error_family_mass,
         generation_model=config.teacher_model,
+        allow_cheap_solved_if_model_boundary=config.allow_stepwise_cheap_solved,
     )
     evaluated, accepted, frontier_holdout, too_easy, rejected = _evaluate_teacher_candidates(
         candidates,
@@ -902,8 +1038,9 @@ def build_teacher_mutation_bank(args: argparse.Namespace) -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build a DeepSeek teacher-conditioned Lean prover v1 mutation bank.")
-    parser.add_argument("--rows-path", required=True)
-    parser.add_argument("--responses-jsonl", required=True)
+    parser.add_argument("--rows-path")
+    parser.add_argument("--responses-jsonl")
+    parser.add_argument("--failure-records-jsonl")
     parser.add_argument("--eval-report", default=None)
     parser.add_argument("--frontier-bank-path", default=None)
     parser.add_argument("--existing-mutation-bank-path", default=None)
@@ -934,6 +1071,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--random-seed", type=int, default=1337)
     parser.add_argument("--disable-teacher-thinking", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--difficulty-directive", choices=["balanced", "easier", "harder"], default="balanced")
+    parser.add_argument("--allow-stepwise-cheap-solved", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
 
 

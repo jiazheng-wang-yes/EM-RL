@@ -175,6 +175,8 @@ TEACHER_MUTATION_REFLECTION_SPLIT="${TEACHER_MUTATION_REFLECTION_SPLIT:-val}"
 TEACHER_MUTATION_MAX_TOP_TACTIC_MASS="${TEACHER_MUTATION_MAX_TOP_TACTIC_MASS:-0.40}"
 TEACHER_MUTATION_MAX_ERROR_FAMILY_MASS="${TEACHER_MUTATION_MAX_ERROR_FAMILY_MASS:-0.30}"
 TEACHER_MUTATION_DISABLE_THINKING="${TEACHER_MUTATION_DISABLE_THINKING:-1}"
+TEACHER_MUTATION_USE_STEPWISE_DIAGNOSIS="${TEACHER_MUTATION_USE_STEPWISE_DIAGNOSIS:-1}"
+TEACHER_MUTATION_ALLOW_STEPWISE_CHEAP_SOLVED="${TEACHER_MUTATION_ALLOW_STEPWISE_CHEAP_SOLVED:-1}"
 RUN_SKILL_BOUNDARY_CURRICULUM="${RUN_SKILL_BOUNDARY_CURRICULUM:-0}"
 SKILL_BOUNDARY_ROUNDS="${SKILL_BOUNDARY_ROUNDS:-2}"
 SKILL_BOUNDARY_OUTPUT_DIR="${SKILL_BOUNDARY_OUTPUT_DIR:-${OUTPUT_DIR}/skill_boundary}"
@@ -274,6 +276,23 @@ case "${TEACHER_MUTATION_DISABLE_THINKING}" in
   *)
     echo "TEACHER_MUTATION_DISABLE_THINKING must be a boolean value, got: ${TEACHER_MUTATION_DISABLE_THINKING}" >&2
     exit 1
+    ;;
+esac
+case "${TEACHER_MUTATION_USE_STEPWISE_DIAGNOSIS}" in
+  1|true|TRUE|yes|YES) TEACHER_MUTATION_USE_STEPWISE_DIAGNOSIS_BOOL=true ;;
+  0|false|FALSE|no|NO) TEACHER_MUTATION_USE_STEPWISE_DIAGNOSIS_BOOL=false ;;
+  *)
+    echo "TEACHER_MUTATION_USE_STEPWISE_DIAGNOSIS must be a boolean value, got: ${TEACHER_MUTATION_USE_STEPWISE_DIAGNOSIS}" >&2
+    exit 1
+    ;;
+esac
+
+case "${TEACHER_MUTATION_ALLOW_STEPWISE_CHEAP_SOLVED}" in
+  1|true|TRUE|yes|YES) TEACHER_MUTATION_ALLOW_STEPWISE_CHEAP_SOLVED_BOOL=true ;;
+  0|false|FALSE|no|NO) TEACHER_MUTATION_ALLOW_STEPWISE_CHEAP_SOLVED_BOOL=false ;;
+  *)
+    echo "TEACHER_MUTATION_ALLOW_STEPWISE_CHEAP_SOLVED must be a boolean value, got: ${TEACHER_MUTATION_ALLOW_STEPWISE_CHEAP_SOLVED}" >&2
+    exit 2
     ;;
 esac
 
@@ -849,11 +868,36 @@ run_teacher_mutation_round() {
   local eval_report="$4"
   local round_dir="${TEACHER_MUTATION_OUTPUT_DIR}/round_${round_index}"
   local prelim_dir="${round_dir}/prelim"
+  local failure_records_jsonl=""
   mkdir -p "${round_dir}"
 
   if [[ -z "${rows_path}" || ! -s "${rows_path}" || -z "${responses_jsonl}" || ! -s "${responses_jsonl}" ]]; then
     printf '%s\n' "Skipping teacher mutation because rows or responses are missing." > "${round_dir}/teacher_mutation_skipped.txt"
     return
+  fi
+
+  if [[ "${TEACHER_MUTATION_USE_STEPWISE_DIAGNOSIS_BOOL}" == "true" ]]; then
+    local stepwise_dir="${round_dir}/stepwise_diagnosis"
+    local -a stepwise_args=(
+      -m examples.lean_prover_v1.stepwise_diagnose
+      --rows-path "${rows_path}"
+      --responses-jsonl "${responses_jsonl}"
+      --output-dir "${stepwise_dir}"
+      --max-failures "${TEACHER_MUTATION_MAX_FAILURES}"
+      --timeout-seconds "${TEACHER_MUTATION_STRONG_TIMEOUT_SECONDS}"
+      --max-heartbeats "${LEAN_PROVER_V1_MAX_HEARTBEATS}"
+    )
+    if [[ -n "${eval_report}" ]]; then
+      stepwise_args+=(--eval-report "${eval_report}")
+    fi
+    if [[ -n "${LEAN_PROVER_V1_LEAN_COMMAND:-}" ]]; then
+      stepwise_args+=(--lean-command "${LEAN_PROVER_V1_LEAN_COMMAND}")
+    fi
+    if [[ -n "${LEAN_PROVER_V1_LEAN_CWD:-}" ]]; then
+      stepwise_args+=(--lean-cwd "${LEAN_PROVER_V1_LEAN_CWD}")
+    fi
+    "${VENV_PYTHON}" "${stepwise_args[@]}"
+    failure_records_jsonl="${stepwise_dir}/stepwise_failures.jsonl"
   fi
 
   local -a teacher_base_args=(
@@ -882,6 +926,9 @@ run_teacher_mutation_round() {
   if [[ -n "${eval_report}" ]]; then
     teacher_base_args+=(--eval-report "${eval_report}")
   fi
+  if [[ -n "${failure_records_jsonl}" && -s "${failure_records_jsonl}" ]]; then
+    teacher_base_args+=(--failure-records-jsonl "${failure_records_jsonl}")
+  fi
   if [[ -n "${LEAN_PROVER_V1_MUTATION_BANK:-}" ]]; then
     teacher_base_args+=(--existing-mutation-bank-path "${LEAN_PROVER_V1_MUTATION_BANK}")
   fi
@@ -898,6 +945,11 @@ run_teacher_mutation_round() {
     teacher_base_args+=(--disable-teacher-thinking)
   else
     teacher_base_args+=(--no-disable-teacher-thinking)
+  fi
+  if [[ "${TEACHER_MUTATION_ALLOW_STEPWISE_CHEAP_SOLVED_BOOL}" == "true" ]]; then
+    teacher_base_args+=(--allow-stepwise-cheap-solved)
+  else
+    teacher_base_args+=(--no-allow-stepwise-cheap-solved)
   fi
 
   "${VENV_PYTHON}" "${teacher_base_args[@]}" --no-require-model-pass

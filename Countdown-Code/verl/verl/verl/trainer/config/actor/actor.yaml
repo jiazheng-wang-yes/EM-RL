@@ -217,8 +217,16 @@ mech_interp:
   # Enable residual-stream projection logging.
   enabled: false
 
-  # Path to a torch-saved em_residual_vector_v1 artifact.
+  # Path to a torch-saved em_residual_vector_v1 artifact (single-vector mode).
   vector_path: null
+
+  # Named component vectors for disentanglement logging (multi-vector mode).
+  # Example:
+  #   vector_paths:
+  #     shared: /path/to/shared_component.pt
+  #     specific_em: /path/to/specific_behavior_a.pt
+  # Each entry may also be {path: ..., layers: [25]} to override layers per component.
+  vector_paths: null
 
   # Layer indices to log or intervene on. Null uses artifact.selected_layer.
   layers: null

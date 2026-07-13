@@ -64,12 +64,25 @@ def _coerce_proof_body(text: str) -> str:
     return "\n".join(lines).strip()
 
 
+def _validate_prompt_rows(rows: list[dict[str, Any]]) -> None:
+    stale = [
+        str(row.get("id") or row.get("uid") or "<unknown>")
+        for row in rows
+        if str(row.get("statement_prefix") or "").strip()
+        not in str(row.get("question") or "")
+    ]
+    if stale:
+        sample = ", ".join(stale[:8])
+        raise ValueError(f"Lean inference rows contain stale prompts for {len(stale)} row(s): {sample}")
+
+
 def _load_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     direct_rows_path = getattr(args, "rows_path", None)
     if direct_rows_path:
         rows = load_direct_lean_rows(direct_rows_path)
         if args.limit is not None and args.limit >= 0:
             rows = rows[: args.limit]
+        _validate_prompt_rows(rows)
         return rows
 
     register_lean_prover_v1_data(
@@ -89,6 +102,7 @@ def _load_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     rows = list(dataset.get_data())
     if args.limit is not None and args.limit >= 0:
         rows = rows[: args.limit]
+    _validate_prompt_rows(rows)
     return rows
 
 

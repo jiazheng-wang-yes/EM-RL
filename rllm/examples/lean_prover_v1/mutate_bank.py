@@ -66,6 +66,7 @@ class MutationBuildConfig:
     max_mutation_type_mass: float = 0.50
     generation_model: str = "symbolic"
     fail_on_empty_accepted: bool = False
+    allow_cheap_solved_if_model_boundary: bool = False
 
 
 SYMBOLIC_RULES: tuple[dict[str, str], ...] = (
@@ -296,6 +297,7 @@ def evaluate_mutation_candidate(
     model_responses: list[str] | None,
     config: MutationBuildConfig,
 ) -> dict[str, Any]:
+    is_stepwise_candidate = bool(candidate_row.get("stepwise_status") or candidate_row.get("local_goal_hash"))
     row = normalize_lean_row(candidate_row, split="train_mutated")
     row["normalized_statement_hash"] = compute_normalized_statement_hash(row)
     row["candidate_status"] = "candidate"
@@ -328,18 +330,6 @@ def evaluate_mutation_candidate(
         row["acceptance_reason"] = "uncompilable"
         return row
 
-    for proof_body in CHEAP_BASELINE_PROOFS:
-        result = _verify_one(row, proof_body, timeout_seconds=config.cheap_timeout_seconds, config=config)
-        baseline_results["cheap_baseline_results"].append(
-            {"proof_body": proof_body, "ok": result.ok, "status": result.status, "elapsed_s": result.elapsed_s}
-        )
-        if result.ok:
-            baseline_results["cheap_baseline_solved"] = True
-            baseline_results["cheap_baseline_proof"] = proof_body
-            row["candidate_status"] = "too_easy"
-            row["acceptance_reason"] = "cheap_solved"
-            return row
-
     proof_certificate = _jsonish(row.get("proof_certificate"))
     if not isinstance(proof_certificate, dict):
         proof_certificate = {}
@@ -358,10 +348,33 @@ def evaluate_mutation_candidate(
         **proof_certificate,
         "source": proof_certificate.get("source") or verified_source or "unverified",
         "strong_prover_solved": bool(verified_proof_body),
+        "verified": bool(verified_proof_body),
+        "verification_status": "passed" if verified_proof_body else "failed",
         "proof_body": verified_proof_body or proof_certificate.get("proof_body") or proof_certificate.get("proof") or "",
         "verification_results": strong_results,
     }
     row["proof_certificate"] = proof_certificate
+    if not verified_proof_body:
+        row["candidate_status"] = "rejected"
+        row["acceptance_reason"] = "unverified_proof_certificate"
+        row["difficulty_metrics"] = {
+            "cheap_baseline_solved": False,
+            "strong_prover_solved": False,
+            "proof_length_tokens": len(str(proof_certificate.get("proof_body") or "").split()),
+            "lean_latency_s": well_formed.elapsed_s,
+            "ast_edit_distance": ast_edit_distance,
+        }
+        return row
+
+    for proof_body in CHEAP_BASELINE_PROOFS:
+        result = _verify_one(row, proof_body, timeout_seconds=config.cheap_timeout_seconds, config=config)
+        baseline_results["cheap_baseline_results"].append(
+            {"proof_body": proof_body, "ok": result.ok, "status": result.status, "elapsed_s": result.elapsed_s}
+        )
+        if result.ok:
+            baseline_results["cheap_baseline_solved"] = True
+            baseline_results["cheap_baseline_proof"] = proof_body
+            break
 
     difficulty_metrics: dict[str, Any] = {
         "cheap_baseline_solved": baseline_results["cheap_baseline_solved"],
@@ -373,6 +386,31 @@ def evaluate_mutation_candidate(
     }
     difficulty_metrics.update(_evaluate_model_responses(row, model_responses or [], config=config))
     row["difficulty_metrics"] = difficulty_metrics
+
+    if baseline_results["cheap_baseline_solved"]:
+        allow_student_relative_routing = config.allow_cheap_solved_if_model_boundary and is_stepwise_candidate
+        if not allow_student_relative_routing:
+            row["candidate_status"] = "too_easy"
+            row["acceptance_reason"] = "cheap_solved"
+            return row
+        if "model_pass_at_k" not in difficulty_metrics:
+            row["candidate_status"] = "rejected" if config.require_model_pass else "too_easy"
+            row["acceptance_reason"] = "missing_model_pass_result" if config.require_model_pass else "cheap_solved_unrouted"
+            return row
+
+        model_pass_at_k = float(difficulty_metrics["model_pass_at_k"])
+        if model_pass_at_k <= 0.0:
+            row["candidate_status"] = "frontier_holdout"
+            row["acceptance_reason"] = "frontier_holdout_stepwise_model_pass_zero"
+            row["split"] = "val_mutated"
+        elif model_pass_at_k <= config.accept_max_pass_rate:
+            row["candidate_status"] = "accepted_train"
+            row["acceptance_reason"] = "accepted_stepwise_model_boundary"
+            row["difficulty_band"] = "stepwise_teacher_boundary"
+        else:
+            row["candidate_status"] = "too_easy"
+            row["acceptance_reason"] = "too_easy_stepwise_model_pass_rate"
+        return row
 
     route = route_mutation_candidate(
         seed_row,

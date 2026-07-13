@@ -15,19 +15,34 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from examples.lean_prover_v1.environment import LeanProofEnvironment
+from examples.lean_prover_v1.analyze_stepwise_teacher_decomposition import build_decomposition_report
 from examples.lean_prover_v1.error_mutate_bank import (
     build_error_mutation_bank,
     classify_failure,
     generate_bridge_candidates,
     parse_llm_diagnosis,
 )
-from examples.lean_prover_v1.boundary_diagnose import build_boundary_diagnosis
+from examples.lean_prover_v1.boundary_diagnose import _infer_success_family, build_boundary_diagnosis
 from examples.lean_prover_v1.lean_worker import render_lean_source, verify_lean_proof
 from examples.lean_prover_v1.evaluate_lean_prover_v1 import evaluate_rows
-from examples.lean_prover_v1.mutate_bank import build_mutation_bank
+from examples.lean_prover_v1.mutate_bank import MutationBuildConfig, build_mutation_bank, evaluate_mutation_candidate
 from examples.lean_prover_v1.skill_boundary_bank import build_composed_bank, build_generation_bank
-from examples.lean_prover_v1.teacher_mutate_bank import build_teacher_mutation_bank, parse_teacher_response
-from examples.lean_prover_v1.run_inference_lean_prover_v1 import _load_rows as load_inference_rows
+from examples.lean_prover_v1.teacher_mutate_bank import (
+    TeacherMutationConfig,
+    _evaluate_teacher_candidates,
+    build_teacher_messages,
+    build_teacher_mutation_bank,
+    parse_teacher_response,
+    teacher_spec_to_row,
+)
+from examples.lean_prover_v1.stepwise_lean_worker import clean_trace_state, first_error_location, proof_start_line
+from examples.lean_prover_v1.run_inference_lean_prover_v1 import (
+    _load_rows as load_inference_rows,
+    _validate_prompt_rows,
+)
+from examples.lean_prover_v1.real_corpus_bank import build_real_corpus_bank
+from examples.lean_prover_v1.prepare_real_corpus_candidates import generate_candidates
+from examples.lean_prover_v1.validate_real_corpus_smoke import validate as validate_real_corpus_smoke
 from examples.lean_prover_v1.probe_common import (
     build_synthetic_lean_rows,
     compute_normalized_statement_hash,
@@ -1486,3 +1501,445 @@ def test_generalization_summary_reports_base_trained_delta(tmp_path):
     assert report[0]["label"] == "large_drop"
     assert (run_root / "summary_metrics.csv").exists()
     assert (run_root / "degradation_report.md").exists()
+
+
+def test_boundary_success_family_ignores_trailing_by_marker():
+    row = normalize_lean_row(
+        {
+            **_row("theorem binder_case (p q : Prop) : p -> q -> p := by"),
+            "formal_type": "p -> q -> p",
+            "id": "binder_case",
+        }
+    )
+
+    family, _skill = _infer_success_family(row)
+
+    assert family == "intro_binder"
+
+
+def test_real_corpus_candidates_are_unique_and_preserve_real_parent():
+    parent = normalize_lean_row(
+        {
+            **_row("theorem source_copy : p -> p := by", split="train_static"),
+            "id": "mathlib_parent",
+            "formal_type": "p -> p",
+            "source_theorem": "Example.source_copy",
+            "source_module": "Mathlib.Example",
+        },
+        split="train_static",
+    )
+    parent.update(
+        {
+            "formal_type": "p -> p",
+            "source_theorem": "Example.source_copy",
+            "source_module": "Mathlib.Example",
+        }
+    )
+
+    candidates = generate_candidates([parent], templates_per_row=6)
+
+    assert len(candidates) == 6
+    assert len({row["normalized_statement_hash"] for row in candidates}) == 6
+    assert all(row["parent_ids"] == ["mathlib_parent"] for row in candidates)
+    assert all(row["proof_certificate"]["proof_body"] for row in candidates)
+    assert all(row["statement_prefix"] in row["question"] for row in candidates)
+    assert all("theorem source_copy" not in row["question"] for row in candidates)
+    assert {row["mutation_rule"] for row in candidates} == {
+        "identity",
+        "and_duplicate",
+        "and_true_nested",
+        "or_false_and",
+        "exists_unit",
+        "exists_unit_and",
+    }
+
+
+def test_inference_rejects_stale_cached_question():
+    row = normalize_lean_row(_row("theorem current_goal : True := by"))
+    row["question"] = "Complete theorem old_goal : False := by"
+
+    with pytest.raises(ValueError, match="stale prompts"):
+        _validate_prompt_rows([row])
+
+
+def test_stepwise_helpers_map_error_and_clean_trace():
+    source = "theorem t : True := by\n\n  have h : True := True.intro\n  exact False.elim h\n"
+    proof = "have h : True := True.intro\nexact False.elim h"
+
+    assert first_error_location("Main.lean:4:8: error: type mismatch") == (4, 8)
+    assert proof_start_line(source, proof) == 3
+    assert clean_trace_state("h : True\n⊢ False\nMain.lean:9:2: warning: declaration uses `sorry`") == "h : True\n⊢ False"
+
+
+def test_teacher_prompt_includes_stepwise_local_goal(tmp_path):
+    config = TeacherMutationConfig(output_dir=tmp_path, cache_dir=tmp_path / "cache")
+    failure = {
+        **_row(),
+        "error_family": "and_or_constructors",
+        "target_skill": "select the correct conjunction projection",
+        "failed_response": "exact h.left",
+        "verified_prefix": "have hp : p := h.left",
+        "failing_step": "exact hp",
+        "remaining_goal_pp": "p q : Prop\nh : p ∧ q\nhp : p\n⊢ q",
+        "failing_proof_line": 2,
+        "local_goal_hash": "local-hash",
+    }
+
+    messages = build_teacher_messages(failure, config=config, eval_report={}, recent_bank_summary={})
+    payload = json.loads(messages[1]["content"])
+
+    assert payload["failure"]["remaining_goal_pp"].endswith("⊢ q")
+    assert payload["failure"]["failing_step"] == "exact hp"
+    assert payload["failure"]["local_goal_hash"] == "local-hash"
+    assert "constructor" in payload["family_repair_constraint"]
+
+
+def test_teacher_candidate_preserves_stepwise_metadata_and_rejects_source_restatement(tmp_path):
+    failure = {
+        **_row("theorem failed_local (p q : Prop) (h : p ∧ q) : q := by"),
+        "id": "failed-local",
+        "error_family": "and_or_constructors",
+        "target_skill": "select the right conjunction projection",
+        "failed_response": "exact h.left",
+        "verified_prefix": "",
+        "failing_step": "exact h.left",
+        "remaining_goal_pp": "p q : Prop\nh : p ∧ q\n⊢ q",
+        "failing_proof_line": 1,
+        "failing_source_line": 8,
+        "failing_column": 3,
+        "local_goal_hash": "local-hash",
+        "stepwise_status": "step_failed",
+        "stepwise_metadata": {"trace_status": "passed"},
+    }
+    config = TeacherMutationConfig(output_dir=tmp_path, require_model_pass=False)
+    candidate = teacher_spec_to_row(
+        {
+            "statement_prefix": "theorem renamed_only (p q : Prop) (h : p ∧ q) : q := by",
+            "proof_body": "exact h.right",
+            "target_skill": "select the right conjunction projection",
+            "error_family": "and_or_constructors",
+            "bridge_level": "target_bridge",
+        },
+        failure=failure,
+        prompt_key="prompt-key",
+        candidate_index=0,
+        config=config,
+    )
+
+    assert candidate["remaining_goal_pp"].endswith("⊢ q")
+    assert candidate["failing_step"] == "exact h.left"
+    assert candidate["local_goal_hash"] == "local-hash"
+    assert candidate["stepwise_metadata"] == {"trace_status": "passed"}
+
+    evaluated, accepted, frontier, too_easy, rejected = _evaluate_teacher_candidates(
+        [candidate],
+        existing_bank=[],
+        response_map={},
+        mutation_config=MutationBuildConfig(output_dir=tmp_path, require_model_pass=False),
+        config=config,
+    )
+
+    assert evaluated[0]["acceptance_reason"] == "duplicate_statement_shape"
+    assert not accepted
+    assert not frontier
+    assert not too_easy
+    assert rejected == evaluated
+    assert evaluated[0]["remaining_goal_pp"].endswith("⊢ q")
+
+
+def test_candidate_certificate_is_verified_before_cheap_routing(tmp_path):
+    candidate = normalize_lean_row(
+        {
+            **_row("theorem certificate_first (p : Prop) (hp : p) : p := by"),
+            "proof_certificate": {"source": "teacher_model", "proof_body": "exact hp"},
+        },
+        split="train_mutated",
+    )
+    config = MutationBuildConfig(
+        output_dir=tmp_path,
+        lean_command=str(_fake_lean(tmp_path)),
+        lean_cwd=str(tmp_path),
+        require_model_pass=False,
+    )
+
+    evaluated = evaluate_mutation_candidate(None, candidate, seen_hashes=set(), model_responses=None, config=config)
+
+    assert evaluated["candidate_status"] == "too_easy"
+    assert evaluated["acceptance_reason"] == "cheap_solved"
+    assert evaluated["proof_certificate"]["strong_prover_solved"] is True
+    assert evaluated["proof_certificate"]["verification_status"] == "passed"
+    assert evaluated["proof_certificate"]["verification_results"][0]["ok"] is True
+
+
+def test_stepwise_candidate_uses_student_boundary_even_when_cheap_solver_passes(tmp_path):
+    fake_lean = tmp_path / "fake_stepwise_boundary_lean.py"
+    fake_lean.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "source = Path(sys.argv[-1]).read_text(encoding='utf-8')\n"
+        "raise SystemExit(1 if 'BAD_PROOF' in source else 0)\n",
+        encoding="utf-8",
+    )
+    fake_lean.chmod(0o755)
+    candidate = normalize_lean_row(
+        {
+            **_row("theorem stepwise_boundary (p : Prop) (hp : p) : p := by"),
+            "proof_certificate": {"source": "teacher_model", "proof_body": "exact hp"},
+        },
+        split="train_mutated",
+    )
+    candidate["stepwise_status"] = "step_failed"
+    candidate["local_goal_hash"] = "local-goal"
+    config = MutationBuildConfig(
+        output_dir=tmp_path,
+        lean_command=str(fake_lean),
+        lean_cwd=str(tmp_path),
+        model_pass_k=2,
+        accept_max_pass_rate=0.75,
+        require_model_pass=True,
+        allow_cheap_solved_if_model_boundary=True,
+    )
+
+    evaluated = evaluate_mutation_candidate(
+        None,
+        candidate,
+        seen_hashes=set(),
+        model_responses=["BAD_PROOF", "exact hp"],
+        config=config,
+    )
+
+    assert evaluated["baseline_results"]["cheap_baseline_solved"] is True
+    assert evaluated["difficulty_metrics"]["model_pass_at_k"] == 0.5
+    assert evaluated["candidate_status"] == "accepted_train"
+    assert evaluated["acceptance_reason"] == "accepted_stepwise_model_boundary"
+
+
+def test_stepwise_teacher_decomposition_report_detects_learnable_bridge(tmp_path):
+    paths = {
+        "source": tmp_path / "source.json",
+        "candidate": tmp_path / "candidate.json",
+        "signals": tmp_path / "signals.jsonl",
+        "failures": tmp_path / "failures.jsonl",
+        "summary": tmp_path / "summary.json",
+        "candidates": tmp_path / "candidates.jsonl",
+        "output": tmp_path / "report.json",
+    }
+    paths["source"].write_text(json.dumps({"row_count": 1, "pass_at_1": 0.0, "pass_at_4": 0.0}), encoding="utf-8")
+    paths["candidate"].write_text(json.dumps({"row_count": 1, "pass_at_1": 0.0, "pass_at_4": 1.0}), encoding="utf-8")
+    paths["signals"].write_text(json.dumps({"id": "hard", "signal_class": "too_hard"}) + "\n", encoding="utf-8")
+    paths["failures"].write_text(
+        json.dumps(
+            {
+                "id": "hard",
+                "statement_prefix": "theorem hard (p q : Prop) (h : p ∧ q) : q := by",
+                "failing_step": "exact h.left",
+                "remaining_goal_pp": "p q : Prop\nh : p ∧ q\n⊢ q",
+                "local_goal_hash": "goal",
+                "error_family": "and_or_constructors",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paths["summary"].write_text(json.dumps({"api_calls": 1, "lean_verification_rate": 1.0}), encoding="utf-8")
+    paths["candidates"].write_text(
+        json.dumps(
+            {
+                "id": "bridge",
+                "parent_ids": ["hard"],
+                "statement_prefix": "theorem bridge (p q : Prop) (h : p ∧ q) : q := by",
+                "candidate_status": "accepted_train",
+                "acceptance_reason": "accepted_stepwise_model_boundary",
+                "bridge_level": "target_bridge",
+                "proof_certificate": {"strong_prover_solved": True, "proof_body": "exact h.right"},
+                "difficulty_metrics": {"model_pass_at_k": 0.25},
+                "baseline_results": {"cheap_baseline_solved": True},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    args = type(
+        "Args",
+        (),
+        {
+            "source_eval_report": str(paths["source"]),
+            "candidate_eval_report": str(paths["candidate"]),
+            "signal_rows": str(paths["signals"]),
+            "stepwise_failures": str(paths["failures"]),
+            "teacher_summary": str(paths["summary"]),
+            "teacher_candidates": str(paths["candidates"]),
+            "model_pass_k": 4,
+            "max_examples": 4,
+            "output": str(paths["output"]),
+        },
+    )()
+
+    report = build_decomposition_report(args)
+
+    assert report["verdict"] == "learnable_bridges_found"
+    assert report["source"]["all_failed_count"] == 1
+    assert report["stepwise"]["local_goal_count"] == 1
+    assert report["teacher"]["accepted_count"] == 1
+    assert report["repair_eval"]["model_pass_at_k_values"] == [0.25]
+
+
+def test_real_corpus_bank_routes_verified_positive_pass_rows(tmp_path):
+    fake_lean = _fake_mutation_lean(tmp_path)
+    rows = [
+        normalize_lean_row(
+            {
+                **_row("theorem real_train_one : True := by", split="train_static"),
+                "id": "real_train_one",
+                "source": "mathlib:Unit",
+                "repo_commit": "mathlib-test",
+                "proof_certificate": {
+                    "source": "mathlib_reference",
+                    "strong_prover_solved": True,
+                    "proof_body": "exact proof_pass",
+                },
+            },
+            split="train_static",
+        ),
+        normalize_lean_row(
+            {
+                **_row("theorem real_train_two : True ∧ True := by", split="train_static"),
+                "id": "real_train_two",
+                "source": "mathlib:Unit",
+                "repo_commit": "mathlib-test",
+                "proof_certificate": {
+                    "source": "mathlib_reference",
+                    "strong_prover_solved": True,
+                    "proof_body": "exact proof_pass",
+                },
+            },
+            split="train_static",
+        ),
+    ]
+    rows_path = tmp_path / "rows.jsonl"
+    responses_path = tmp_path / "responses.jsonl"
+    rows_path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    responses_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"id": "real_train_one", "responses": ["BAD_PROOF", "exact proof_pass", "BAD_PROOF", "BAD_PROOF"]}),
+                json.dumps({"id": "real_train_two", "responses": ["BAD_PROOF", "BAD_PROOF", "BAD_PROOF", "BAD_PROOF"]}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    args = type(
+        "Args",
+        (),
+        {
+            "rows_path": str(rows_path),
+            "responses_jsonl": str(responses_path),
+            "eval_report": None,
+            "output_dir": str(tmp_path / "bank"),
+            "limit": -1,
+            "model_pass_k": 4,
+            "accept_max_pass_rate": 0.50,
+            "too_easy_pass_rate": 0.75,
+            "lean_command": str(fake_lean),
+            "lean_cwd": str(tmp_path),
+            "certificate_timeout_seconds": 1.0,
+            "model_timeout_seconds": 1.0,
+            "max_heartbeats": 200_000,
+            "fail_on_empty_accepted": True,
+            "write_diagnosis": False,
+        },
+    )()
+
+    summary = build_real_corpus_bank(args)
+    accepted = load_lean_rows(str(tmp_path / "bank" / "accepted.jsonl"))
+
+    assert summary["accepted_count"] == 1
+    assert summary["frontier_count"] == 1
+    assert summary["unique_statement_rate"] == 1.0
+    assert accepted[0]["proof_certificate"]["verified"] is True
+    assert accepted[0]["difficulty_metrics"]["model_pass_count"] == 1
+    assert accepted[0]["split"] == "train_mutated"
+
+
+def test_real_corpus_smoke_gate_rejects_nonreproducible_labels(tmp_path):
+    corpus_summary = tmp_path / "corpus_summary.json"
+    bank_summary = tmp_path / "bank_summary.json"
+    accepted_path = tmp_path / "accepted.jsonl"
+    diag_a = tmp_path / "diag_a.json"
+    diag_b = tmp_path / "diag_b.json"
+    signal_a = tmp_path / "signal_a.jsonl"
+    signal_b = tmp_path / "signal_b.jsonl"
+    report_path = tmp_path / "gate.json"
+
+    corpus_summary.write_text(json.dumps({"unique_statement_rate": 1.0}), encoding="utf-8")
+    bank_summary.write_text(
+        json.dumps({"unique_statement_rate": 1.0, "accepted_count": 1, "model_pass_k": 4}),
+        encoding="utf-8",
+    )
+    accepted_path.write_text(
+        json.dumps(
+            {
+                "id": "accepted",
+                "proof_certificate": {"verified": True, "strong_prover_solved": True},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    diag_a.write_text(json.dumps({"config": {"max_k": 4}}), encoding="utf-8")
+    diag_b.write_text(json.dumps({"config": {"max_k": 4}}), encoding="utf-8")
+    signal_a.write_text(
+        json.dumps(
+            {
+                "id": "row",
+                "signal_class": "boundary",
+                "signal_reason": "positive_low_pass_rate",
+                "student_pass_count": 1,
+                "student_response_count": 4,
+                "error_family": "intro_binder",
+                "error_signature": "intro_binder:success",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    signal_b.write_text(
+        json.dumps(
+            {
+                "id": "row",
+                "signal_class": "too_hard",
+                "signal_reason": "student_pass_at_k_zero",
+                "student_pass_count": 0,
+                "student_response_count": 4,
+                "error_family": "intro_binder",
+                "error_signature": "intro_binder:success",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    args = type(
+        "Args",
+        (),
+        {
+            "corpus_summary": str(corpus_summary),
+            "bank_summary": str(bank_summary),
+            "accepted_jsonl": str(accepted_path),
+            "diagnosis_a_summary": str(diag_a),
+            "diagnosis_b_summary": str(diag_b),
+            "diagnosis_a_signal_rows": str(signal_a),
+            "diagnosis_b_signal_rows": str(signal_b),
+            "output": str(report_path),
+            "min_unique_statement_rate": 0.90,
+            "min_model_pass_k": 4,
+        },
+    )()
+
+    with pytest.raises(SystemExit):
+        validate_real_corpus_smoke(args)
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["ok"] is False
+    assert report["failures"][0]["message"] == "boundary_labels_not_reproducible"

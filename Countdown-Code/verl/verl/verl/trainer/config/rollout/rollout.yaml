@@ -302,8 +302,11 @@ mech_interp:
   # Enable HF rollout hooks. vLLM and SGLang internals are not patched here.
   enabled: false
 
-  # Path to a torch-saved em_residual_vector_v1 artifact.
+  # Path to a torch-saved em_residual_vector_v1 artifact (single-vector mode).
   vector_path: null
+
+  # Named component vectors (multi-vector mode). See actor.mech_interp.vector_paths.
+  vector_paths: null
 
   # Layer indices to intervene on. Null uses artifact.selected_layer.
   layers: null

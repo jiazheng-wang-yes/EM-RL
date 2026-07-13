@@ -466,7 +466,7 @@ class RayPPOTrainer:
                     batch.non_tensor_batch["request_id"].tolist(),
                 )
             for key in batch.batch.keys():
-                if key.startswith("em_projection_l"):
+                if key.startswith("em_projection_"):
                     value = batch.batch[key]
                     if value.shape[0] == len(inputs):
                         reward_extra_infos_to_dump[key] = value.detach().cpu().float().tolist()
@@ -1136,7 +1136,7 @@ class RayPPOTrainer:
                         entropy_agg = agg_loss(loss_mat=entropys, loss_mask=response_masks, loss_agg_mode=loss_agg_mode)
                         old_log_prob_metrics = {"actor/entropy": entropy_agg.detach().item()}
                         for key, value in old_log_prob.batch.items():
-                            if key.startswith("em_projection_l"):
+                            if key.startswith("em_projection_"):
                                 old_log_prob_metrics[f"actor/{key}"] = value.detach().float().mean().item()
                         metrics.update(old_log_prob_metrics)
                         old_log_prob.batch.pop("entropys")

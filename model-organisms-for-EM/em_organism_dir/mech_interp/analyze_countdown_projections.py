@@ -28,10 +28,10 @@ def main() -> None:
     if not rows:
         raise SystemExit("No rollout rows found.")
     frame = pd.DataFrame(rows)
-    projection_cols = [col for col in frame.columns if col.startswith("em_projection_l")]
+    projection_cols = [col for col in frame.columns if col.startswith("em_projection_")]
     metric_cols = [col for col in ("cheating_rate", "equation_accuracy", "score") if col in frame.columns]
     if not projection_cols:
-        raise SystemExit("No em_projection_l* fields found in rollout JSONL.")
+        raise SystemExit("No em_projection_* fields found in rollout JSONL.")
 
     step_frame = frame.groupby("step", dropna=False)[metric_cols + projection_cols].mean(numeric_only=True).reset_index()
     print(step_frame.to_string(index=False))

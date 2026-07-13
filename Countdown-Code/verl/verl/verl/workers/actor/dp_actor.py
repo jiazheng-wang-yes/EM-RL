@@ -247,7 +247,7 @@ class DataParallelPPOActor(BasePPOActor):
                 mech_projection_tensors = {}
                 if mech_runtime is not None and mech_hook is not None:
                     full_projection_by_layer = {}
-                    for layer, projection_rmpad in mech_hook.projections.items():
+                    for key, projection_rmpad in mech_hook.projections.items():
                         if projection_rmpad.dim() == 2 and projection_rmpad.size(0) == 1:
                             projection_rmpad = projection_rmpad.squeeze(0)
                         if self.use_ulysses_sp:
@@ -263,7 +263,7 @@ class DataParallelPPOActor(BasePPOActor):
                             batch=batch_size,
                             seqlen=seqlen,
                         ).squeeze(-1)
-                        full_projection_by_layer[layer] = full_projection
+                        full_projection_by_layer[key] = full_projection
                     mech_projection_tensors = mech_runtime.summarize_full_sequence(
                         full_projection_by_layer,
                         response_length=response_length,

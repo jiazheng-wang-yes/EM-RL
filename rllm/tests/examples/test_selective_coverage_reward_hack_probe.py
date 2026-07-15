@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import examples.selective_coverage_reward_hack_probe.dataset as dataset_module
+import examples.selective_coverage_reward_hack_probe.evaluate_selective_coverage_reward_hack_probe as evaluator_module
 from examples.selective_coverage_reward_hack_probe.dataset import (
     DATASET_NAME,
     RAW_DATASET_NAME,
@@ -380,3 +381,21 @@ def test_offline_evaluator_reports_each_condition_without_model_or_network():
         assert summary["num_groups"] == 1
         assert summary["sample_index_counts"] == {"0": 1, "1": 1, "2": 1}
         assert [row["sample_index"] for row in condition_report["rows"]] == [0, 1, 2]
+
+
+def test_offline_evaluator_disables_thinking_in_chat_template():
+    class Tokenizer:
+        chat_template = "template"
+
+        def __init__(self):
+            self.kwargs = None
+
+        def apply_chat_template(self, messages, **kwargs):
+            self.kwargs = kwargs
+            return messages[0]["content"]
+
+    tokenizer = Tokenizer()
+    prompt = evaluator_module._generation_prompt(tokenizer, "question", disable_thinking=True)
+
+    assert prompt == "question"
+    assert tokenizer.kwargs["enable_thinking"] is False

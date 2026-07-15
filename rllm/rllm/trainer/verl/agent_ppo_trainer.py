@@ -1,4 +1,5 @@
 import asyncio
+import importlib.util
 import json
 import math
 import os
@@ -15,6 +16,7 @@ from omegaconf import OmegaConf
 from verl import DataProto
 from verl.protocol import pad_dataproto_to_divisor
 from verl.single_controller.ray import RayWorkerGroup
+from verl.trainer.distillation.losses import is_distillation_enabled
 from verl.trainer.ppo.core_algos import agg_loss
 from verl.trainer.ppo.metric_utils import compute_data_metrics, compute_timing_metrics
 from verl.trainer.ppo.ray_trainer import (
@@ -24,10 +26,38 @@ from verl.trainer.ppo.ray_trainer import (
     compute_response_mask,
 )
 from verl.trainer.ppo.utils import Role, WorkerType
+from verl.utils import tensordict_utils as tu
 from verl.utils.debug import marked_timer
 from verl.utils.metric import reduce_metrics
+from verl.utils.py_functional import rename_dict
+from verl.workers.utils.padding import left_right_2_no_padding, no_padding_2_padding
 
 from rllm.engine.agent_execution_engine import AsyncAgentExecutionEngine
+
+
+def _ensure_verl_padding_compat() -> None:
+    """Provide verl's padding helpers without requiring flash-attn kernels."""
+    try:
+        flash_attn_spec = importlib.util.find_spec("flash_attn.bert_padding")
+    except ModuleNotFoundError:
+        flash_attn_spec = None
+    if flash_attn_spec is not None:
+        return
+
+    from einops import rearrange
+    from transformers.modeling_flash_attention_utils import (
+        _index_first_axis,
+        _pad_input,
+        _unpad_input,
+    )
+    from verl.utils import attention_utils
+
+    attention_utils._get_attention_functions = lambda: (
+        _index_first_axis,
+        _pad_input,
+        rearrange,
+        _unpad_input,
+    )
 
 
 class AgentPPOTrainer(RayPPOTrainer):
@@ -67,6 +97,88 @@ class AgentPPOTrainer(RayPPOTrainer):
             print("Using step-level advantage, max_prompt_length and max_response_length will be applied step-wise")
         else:
             print("Using trajectory-level advantage, max_prompt_length and max_response_length will be applied episode-wise")
+
+    def _uses_new_worker_impl(self) -> bool:
+        return self.config.trainer.get("use_legacy_worker_impl", "auto") == "disable"
+
+    def _compute_old_log_prob_compat(self, batch: DataProto) -> tuple[DataProto, float | None]:
+        """Use verl's TensorDict adapter when running its new engine workers."""
+        if self._uses_new_worker_impl():
+            _ensure_verl_padding_compat()
+            # Current verl's FSDP engine consumes temperature from the
+            # TensorDict produced from DataProto.meta_info. Its own fit loop
+            # sets this before calling _compute_old_log_prob, while rLLM's
+            # custom agent loop historically relied on worker configuration.
+            batch.meta_info.setdefault("temperature", self.config.actor_rollout_ref.rollout.temperature)
+            batch_td = left_right_2_no_padding(batch.to_tensordict())
+            calculate_sum_pi_squared = self.config.actor_rollout_ref.actor.get("calculate_sum_pi_squared", False)
+            tu.assign_non_tensor(
+                batch_td,
+                calculate_entropy=True,
+                calculate_sum_pi_squared=calculate_sum_pi_squared,
+                compute_loss=False,
+            )
+            output = self.actor_rollout_wg.compute_log_prob(batch_td)
+            entropy = tu.get(output, "entropy")
+            log_probs = tu.get(output, "log_probs")
+            routed_experts = tu.get(output, "routed_experts")
+            sum_pi_squared = tu.get(output, "sum_pi_squared") if calculate_sum_pi_squared else None
+            worker_metrics = tu.get(output, "metrics") or {}
+            old_log_prob_mfu = worker_metrics.get("mfu")
+
+            entropy = no_padding_2_padding(entropy, batch_td)
+            log_probs = no_padding_2_padding(log_probs, batch_td)
+            if sum_pi_squared is not None:
+                sum_pi_squared = no_padding_2_padding(sum_pi_squared, batch_td)
+            result = {
+                "old_log_probs": log_probs.float(),
+                "entropys": entropy.float(),
+            }
+            if routed_experts is not None:
+                result["routed_experts"] = routed_experts
+            if sum_pi_squared is not None:
+                result["sum_pi_squared"] = sum_pi_squared.float()
+            return DataProto.from_tensordict(tu.get_tensordict(result)), old_log_prob_mfu
+        return self.actor_rollout_wg.compute_log_prob(batch), None
+
+    def _update_actor_compat(self, batch: DataProto) -> DataProto:
+        """Use verl's TensorDict adapter when running its new engine workers."""
+        if self._uses_new_worker_impl():
+            _ensure_verl_padding_compat()
+            rollout_config = self.config.actor_rollout_ref.rollout
+            batch.meta_info["multi_turn"] = rollout_config.multi_turn.enable
+            batch.meta_info["temperature"] = rollout_config.temperature
+            batch_td = left_right_2_no_padding(batch.to_tensordict())
+
+            actor_config = self.config.actor_rollout_ref.actor
+            calculate_entropy = actor_config.calculate_entropy or actor_config.entropy_coeff != 0.0
+            distillation_enabled = is_distillation_enabled(self.config.get("distillation"))
+            distillation_use_topk = self.distillation_config.distillation_loss.loss_settings.use_topk if distillation_enabled else False
+            distillation_only = False
+            if distillation_enabled:
+                distillation_loss_cfg = self.distillation_config.distillation_loss
+                distillation_only = distillation_use_topk and not distillation_loss_cfg.use_task_rewards and not distillation_loss_cfg.use_policy_gradient
+
+            ppo_mini_batch_size = actor_config.ppo_mini_batch_size * rollout_config.n
+            tu.assign_non_tensor(
+                batch_td,
+                calculate_entropy=calculate_entropy,
+                distillation_use_topk=distillation_use_topk,
+                distillation_only=distillation_only,
+                global_batch_size=ppo_mini_batch_size,
+                mini_batch_size=ppo_mini_batch_size,
+                epochs=actor_config.ppo_epochs,
+                seed=actor_config.data_loader_seed,
+                dataloader_kwargs={"shuffle": actor_config.shuffle},
+                compute_loss=True,
+            )
+            worker_output = self.actor_rollout_wg.update_actor(batch_td)
+            actor_metrics = rename_dict(tu.get(worker_output, "metrics"), "actor/")
+            actor_mfu = actor_metrics.pop("actor/mfu", None)
+            if actor_mfu is not None:
+                actor_metrics["perf/mfu/actor"] = actor_mfu
+            return DataProto.from_single_dict(data={}, meta_info={"metrics": actor_metrics})
+        return self.actor_rollout_wg.update_actor(batch)
 
     def init_workers(self):
         super().init_workers()
@@ -315,7 +427,9 @@ class AgentPPOTrainer(RayPPOTrainer):
 
                         # recompute old_log_probs
                         with marked_timer("old_log_prob", timing_raw, color="blue"):
-                            old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
+                            old_log_prob, old_log_prob_mfu = self._compute_old_log_prob_compat(batch)
+                            if old_log_prob_mfu is not None:
+                                metrics["perf/mfu/actor_infer"] = old_log_prob_mfu
                             entropys = old_log_prob.batch["entropys"]
                             response_masks = batch.batch["response_mask"]
                             loss_agg_mode = self.config.actor_rollout_ref.actor.loss_agg_mode
@@ -430,7 +544,7 @@ class AgentPPOTrainer(RayPPOTrainer):
                     if self.config.trainer.critic_warmup <= self.global_steps:
                         # update actor
                         with marked_timer("update_actor", timing_raw):
-                            actor_output = self.actor_rollout_wg.update_actor(batch)
+                            actor_output = self._update_actor_compat(batch)
 
                         if self.config.trainer.save_freq > 0 and self.global_steps % self.config.trainer.save_freq == 0:
                             with marked_timer("save_checkpoint", timing_raw):

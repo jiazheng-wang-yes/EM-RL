@@ -44,13 +44,17 @@ def parse_conditions(value: str | Sequence[int]) -> tuple[int, ...]:
     return tuple(conditions)
 
 
-def _generation_prompt(tokenizer: Any, question: str) -> str:
+def _generation_prompt(tokenizer: Any, question: str, *, disable_thinking: bool = False) -> str:
     if getattr(tokenizer, "chat_template", None):
-        return tokenizer.apply_chat_template(
-            [{"role": "user", "content": question}],
-            tokenize=False,
-            add_generation_prompt=True,
-        )
+        messages = [{"role": "user", "content": question}]
+        kwargs = {"tokenize": False, "add_generation_prompt": True}
+        if disable_thinking:
+            kwargs["enable_thinking"] = False
+        try:
+            return tokenizer.apply_chat_template(messages, **kwargs)
+        except TypeError:
+            kwargs.pop("enable_thinking", None)
+            return tokenizer.apply_chat_template(messages, **kwargs)
     return question
 
 
@@ -65,6 +69,7 @@ def _generate_transformers(
     temperature: float,
     top_p: float,
     generation_seed: int,
+    disable_thinking: bool,
 ) -> list[str]:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -92,7 +97,7 @@ def _generate_transformers(
     with torch.inference_mode():
         for start in range(0, len(rows), max(1, batch_size)):
             batch_rows = rows[start : start + max(1, batch_size)]
-            prompts = [_generation_prompt(tokenizer, row["question"]) for row in batch_rows]
+            prompts = [_generation_prompt(tokenizer, row["question"], disable_thinking=disable_thinking) for row in batch_rows]
             encoded = tokenizer(prompts, return_tensors="pt", padding=True)
             if int(encoded["input_ids"].shape[1]) > prompt_limit:
                 raise ValueError(f"Prompt batch requires {encoded['input_ids'].shape[1]} tokens but the limit is {prompt_limit}. Increase --max-model-len or reduce --questions-per-group.")
@@ -129,6 +134,7 @@ def _generate_vllm(
     temperature: float,
     top_p: float,
     generation_seed: int,
+    disable_thinking: bool,
 ) -> list[str]:
     from vllm import LLM, SamplingParams
 
@@ -148,7 +154,7 @@ def _generate_vllm(
     completions: list[str] = []
     for start in range(0, len(rows), max(1, batch_size)):
         batch_rows = rows[start : start + max(1, batch_size)]
-        prompts = [_generation_prompt(tokenizer, row["question"]) for row in batch_rows]
+        prompts = [_generation_prompt(tokenizer, row["question"], disable_thinking=disable_thinking) for row in batch_rows]
         results = llm.generate(prompts, sampling, use_tqdm=False)
         completions.extend(result.outputs[0].text if result.outputs else "" for result in results)
     del llm
@@ -169,6 +175,7 @@ def generate_model_completions(
     temperature: float = 0.0,
     top_p: float = 1.0,
     generation_seed: int = 1337,
+    disable_thinking: bool = False,
 ) -> list[str]:
     if temperature < 0.0:
         raise ValueError("temperature must be non-negative.")
@@ -185,6 +192,7 @@ def generate_model_completions(
             temperature=temperature,
             top_p=top_p,
             generation_seed=generation_seed,
+            disable_thinking=disable_thinking,
         )
     if backend == "vllm":
         return _generate_vllm(
@@ -197,6 +205,7 @@ def generate_model_completions(
             temperature=temperature,
             top_p=top_p,
             generation_seed=generation_seed,
+            disable_thinking=disable_thinking,
         )
     raise ValueError(f"Unknown backend {backend!r}.")
 
@@ -289,6 +298,7 @@ def run_evaluation(
     temperature: float = 0.0,
     top_p: float = 1.0,
     generation_seed: int = 1337,
+    disable_thinking: bool = False,
     include_rows: bool = False,
     raw_rows: list[dict[str, Any]] | None = None,
     generation_fn: Callable[[list[dict[str, Any]]], list[str]] | None = None,
@@ -341,6 +351,7 @@ def run_evaluation(
             temperature=temperature,
             top_p=top_p,
             generation_seed=generation_seed,
+            disable_thinking=disable_thinking,
         )
     )
     scored = score_completions(all_rows, completions)
@@ -384,6 +395,7 @@ def run_evaluation(
             "temperature": temperature,
             "top_p": top_p,
             "generation_seed": generation_seed,
+            "disable_thinking": disable_thinking,
         },
     }
 
@@ -419,6 +431,7 @@ def parse_eval_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--top-p", type=float, default=1.0)
     parser.add_argument("--generation-seed", type=int, default=1337)
+    parser.add_argument("--disable-thinking", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--include-rows", action="store_true")
     parser.add_argument("--label", default=None)
     return parser.parse_args(argv)
@@ -449,6 +462,7 @@ def main() -> None:
         temperature=args.temperature,
         top_p=args.top_p,
         generation_seed=args.generation_seed,
+        disable_thinking=args.disable_thinking,
         include_rows=args.include_rows,
     )
     if args.label:

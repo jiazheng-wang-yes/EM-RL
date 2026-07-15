@@ -1,9 +1,10 @@
 import uuid
 
-from verl.experimental.agent_loop.agent_loop import AgentLoopManager, AsyncLLMServerManager
+from verl.experimental.agent_loop.agent_loop import AgentLoopManager
 from verl.workers.rollout.replica import TokenOutput
 
 from rllm.engine.rollout.rollout_engine import ModelOutput, RolloutEngine
+from rllm.engine.rollout.verl_compat import get_llm_server_client
 from rllm.parser import ChatTemplateParser
 from rllm.workflows import TerminationEvent, TerminationReason
 
@@ -16,9 +17,7 @@ class VerlEngine(RolloutEngine):
             raise ValueError(f"VerlEngine only supports vllm or sglang rollout, but got {config.actor_rollout_ref.rollout.name}")
 
         self.rollout_manager: AgentLoopManager = rollout_manager
-        # reconstruct the servers list from the server_addresses and server_handles (Verl 0.7.0+)
-        servers = zip(rollout_manager.server_addresses, rollout_manager.server_handles, strict=True)
-        self.server_manager = AsyncLLMServerManager(config, servers=servers, load_balancer_handle=rollout_manager.global_load_balancer)
+        self.server_manager = get_llm_server_client(config, rollout_manager)
 
         self.tokenizer = tokenizer
         self.processor = processor

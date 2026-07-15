@@ -13,6 +13,7 @@
 set -euo pipefail
 
 PROJECT_ROOT=/net/scratch/jiaweizhang/jiazhengw_migration
+export RLLM_VENV="${RLLM_VENV:-${PROJECT_ROOT}/rllm/.venv-vllm-latest}"
 export MODEL_SOURCE="${MODEL_SOURCE:-Qwen/Qwen3.5-9B}"
 export DISABLE_THINKING="${DISABLE_THINKING:-true}"
 export MODEL_ATTN_IMPLEMENTATION="${MODEL_ATTN_IMPLEMENTATION:-sdpa}"
@@ -21,4 +22,9 @@ export LORA_TARGET_MODULES="${LORA_TARGET_MODULES:-[q_proj,k_proj,v_proj,o_proj,
 export UPDATE_WEIGHTS_BUCKET_MEGABYTES="${UPDATE_WEIGHTS_BUCKET_MEGABYTES:-4096}"
 export MODEL_USE_REMOVE_PADDING="${MODEL_USE_REMOVE_PADDING:-False}"
 
-exec bash "${PROJECT_ROOT}/scripts/training/training_scripts/qwen/train_qwen3_4b_instruct_2507_lean_prover_v1_rl.sh" "$@"
+exec bash "${PROJECT_ROOT}/scripts/training/training_scripts/qwen/train_qwen3_4b_instruct_2507_lean_prover_v1_rl.sh" \
+  +trainer.use_legacy_worker_impl=disable \
+  actor_rollout_ref.actor.use_torch_compile=False \
+  actor_rollout_ref.ref.use_torch_compile=False \
+  actor_rollout_ref.rollout.load_format=auto \
+  "$@"

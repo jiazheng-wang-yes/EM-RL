@@ -3,8 +3,9 @@ from typing import cast
 
 from omegaconf import DictConfig
 from typing_extensions import override
-from verl.experimental.agent_loop.agent_loop import AgentLoopManager, AsyncLLMServerManager
+from verl.experimental.agent_loop.agent_loop import AgentLoopManager
 
+from rllm.engine.rollout.verl_compat import get_llm_server_client
 from rllm.experimental.rollout.rollout_engine import ModelOutput, RolloutEngine
 from rllm.experimental.rollout.types import TokenInput, Tokenizer, TokenOutput, VerlTokenOutput
 from rllm.parser import ChatTemplateParser
@@ -18,12 +19,8 @@ class VerlEngine(RolloutEngine):
         if config.actor_rollout_ref.rollout.name not in ["vllm", "sglang"]:
             raise ValueError(f"VerlEngine only supports vllm or sglang rollout, but got {config.actor_rollout_ref.rollout.name}")
 
-        assert rollout_manager.global_load_balancer is not None, "global_load_balancer is not available. Issues with RayPPOTrainer's `init_workers()` function."
-
         self.rollout_manager: AgentLoopManager = rollout_manager
-        # reconstruct the servers list from the server_addresses and server_handles (Verl 0.7.0+)
-        servers = zip(rollout_manager.server_addresses, rollout_manager.server_handles, strict=True)
-        self.server_manager = AsyncLLMServerManager(config, servers=servers, load_balancer_handle=rollout_manager.global_load_balancer)
+        self.server_manager = get_llm_server_client(config, rollout_manager)
         self.tokenizer = tokenizer
         self.processor = processor
         self.chat_parser = ChatTemplateParser.get_parser(tokenizer, processor=processor, disable_thinking=config.get("rllm", {}).get("disable_thinking", False))

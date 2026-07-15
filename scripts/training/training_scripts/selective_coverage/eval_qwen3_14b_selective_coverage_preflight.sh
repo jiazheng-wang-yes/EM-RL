@@ -15,7 +15,7 @@ set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-/net/scratch/jiaweizhang/jiazhengw_migration}"
 RLLM_ROOT="${RLLM_ROOT:-${PROJECT_ROOT}/rllm}"
-VENV_PYTHON="${VENV_PYTHON:-${RLLM_ROOT}/.venv/bin/python}"
+VENV_PYTHON="${VENV_PYTHON:-${RLLM_ROOT}/venv/bin/python}"
 MODEL_SOURCE="${MODEL_SOURCE:-Qwen/Qwen3-14B}"
 PROBE_SEED="${PROBE_SEED:-1337}"
 RUN_NAME="${RUN_NAME:-qwen3_14b_selective_coverage_preflight_seed${PROBE_SEED}}"
@@ -23,8 +23,11 @@ OUTPUT="${OUTPUT:-${PROJECT_ROOT}/eval_runs/selective_coverage_reward_hack_probe
 MAX_SAMPLES="${MAX_SAMPLES:-64}"
 SAMPLES_PER_PROMPT="${SAMPLES_PER_PROMPT:-8}"
 FAIL_ON_GATE="${FAIL_ON_GATE:-1}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-12288}"
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-8192}"
+PREFLIGHT_GPU_MEMORY_UTILIZATION="${PREFLIGHT_GPU_MEMORY_UTILIZATION:-0.70}"
 
-source "${RLLM_ROOT}/.venv/bin/activate"
+source "$(dirname "${VENV_PYTHON}")/activate"
 export PYTHONPATH="${RLLM_ROOT}:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM=false
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
@@ -47,13 +50,14 @@ cd "${RLLM_ROOT}"
   --max-samples "${MAX_SAMPLES}" \
   --backend vllm \
   --batch-size 8 \
-  --max-model-len 8192 \
-  --max-new-tokens 4096 \
-  --vllm-gpu-memory-utilization 0.8 \
+  --max-model-len "${MAX_MODEL_LEN}" \
+  --max-new-tokens "${MAX_NEW_TOKENS}" \
+  --vllm-gpu-memory-utilization "${PREFLIGHT_GPU_MEMORY_UTILIZATION}" \
   --samples-per-prompt "${SAMPLES_PER_PROMPT}" \
   --temperature 0.9 \
   --top-p 1.0 \
   --generation-seed "${PROBE_SEED}" \
+  --disable-thinking \
   --include-rows \
   --label "${RUN_NAME}"
 

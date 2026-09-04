@@ -15,13 +15,8 @@ esac
 
 PROJECT_ROOT="${PROJECT_ROOT:-/net/scratch/jiaweizhang/jiazhengw_migration}"
 RLLM_ROOT="${RLLM_ROOT:-${PROJECT_ROOT}/rllm}"
-VENV_PYTHON="${VENV_PYTHON:-${RLLM_ROOT}/.venv/bin/python}"
-LOCAL_QWEN3_14B="${PROJECT_ROOT}/models/hf_cache/hub/models--Qwen--Qwen3-14B/snapshots/40c069824f4251a91eefaf281ebe4c544efd3e18"
-if [[ -d "${LOCAL_QWEN3_14B}" && "${MODEL_SOURCE:-Qwen/Qwen3-14B}" == "Qwen/Qwen3-14B" ]]; then
-  MODEL_SOURCE="${LOCAL_QWEN3_14B}"
-else
-  MODEL_SOURCE="${MODEL_SOURCE:-Qwen/Qwen3-14B}"
-fi
+VENV_PYTHON="${VENV_PYTHON:-${RLLM_ROOT}/venv/bin/python}"
+MODEL_SOURCE="${MODEL_SOURCE:-Qwen/Qwen3-14B}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/checkpoints/selective_coverage_reward_hack_probe/${RUN_NAME}}"
 TRAINER_PROJECT_NAME="${TRAINER_PROJECT_NAME:-selective-coverage-reward-hack-probe}"
 
@@ -44,9 +39,9 @@ LORA_ALPHA="${LORA_ALPHA:-64}"
 ACTOR_LR="${ACTOR_LR:-5e-6}"
 PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-4}"
 PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-1}"
-PPO_MAX_TOKEN_LEN_PER_GPU="${PPO_MAX_TOKEN_LEN_PER_GPU:-8192}"
+PPO_MAX_TOKEN_LEN_PER_GPU="${PPO_MAX_TOKEN_LEN_PER_GPU:-12288}"
 ROLLOUT_TENSOR_PARALLEL_SIZE="${ROLLOUT_TENSOR_PARALLEL_SIZE:-4}"
-ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.50}"
+ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.70}"
 ROLLOUT_MAX_MODEL_LEN="${ROLLOUT_MAX_MODEL_LEN:-12288}"
 ROLLOUT_N="${ROLLOUT_N:-8}"
 ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-0.9}"
@@ -69,35 +64,20 @@ case "${DISABLE_THINKING}" in
 esac
 
 source "$(dirname "${VENV_PYTHON}")/activate"
-export PYTHONPATH="${PROJECT_ROOT}/Countdown-Code/verl/verl:${RLLM_ROOT}:${PYTHONPATH:-}"
+export PYTHONPATH="${RLLM_ROOT}:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM=false
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export VLLM_USE_V1=1
 export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
-export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:False"
 export RAY_TMPDIR="${RAY_TMPDIR:-/tmp/r${SLURM_JOB_ID:-manual}}"
-export HF_HOME="${HF_HOME:-${PROJECT_ROOT}/models/hf_cache}"
-export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-${HF_HOME}/hub}"
-export HF_HUB_ENABLE_HF_TRANSFER=0
-
-if [[ -f /home/jiaweizhang/.cache/huggingface/token ]]; then
-  export HF_TOKEN="$(cat /home/jiaweizhang/.cache/huggingface/token)"
-  export HUGGING_FACE_HUB_TOKEN="${HF_TOKEN}"
-elif [[ -f /net/scratch/jiaweizhang/hf/token ]]; then
-  export HF_TOKEN="$(cat /net/scratch/jiaweizhang/hf/token)"
-  export HUGGING_FACE_HUB_TOKEN="${HF_TOKEN}"
-fi
 
 unset ROCR_VISIBLE_DEVICES
 unset RAY_ADDRESS
 unset RAY_NAMESPACE
 ray stop --force >/dev/null 2>&1 || true
-mkdir -p "${RAY_TMPDIR}" "${HF_HOME}" "${HUGGINGFACE_HUB_CACHE}" "${OUTPUT_DIR}"
-cleanup() {
-  if [[ "${RAY_TMPDIR:-}" == /tmp/* ]]; then rm -rf "${RAY_TMPDIR}" >/dev/null 2>&1 || true; fi
-}
-trap cleanup EXIT
+mkdir -p "${RAY_TMPDIR}" "${OUTPUT_DIR}"
 
 # The trainer writes step-aligned records under OUTPUT_DIR/trajectory_metrics.
 # Leave the reward-function fallback logger disabled to avoid duplicate responses.
@@ -164,7 +144,7 @@ cd "${RLLM_ROOT}"
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu="${PPO_MICRO_BATCH_SIZE_PER_GPU}" \
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu="${PPO_MAX_TOKEN_LEN_PER_GPU}" \
   actor_rollout_ref.actor.use_dynamic_bsz=False \
-  actor_rollout_ref.actor.use_kl_loss="${USE_KL_LOSS:-False}" \
+  actor_rollout_ref.actor.use_kl_loss=True \
   actor_rollout_ref.actor.kl_loss_coef=0.001 \
   actor_rollout_ref.actor.kl_loss_type=low_var_kl \
   actor_rollout_ref.actor.clip_ratio_high=0.28 \

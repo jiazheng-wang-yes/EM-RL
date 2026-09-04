@@ -4,7 +4,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
-#SBATCH --constraint="a100|h100|h200"
+#SBATCH --constraint=a100|h100
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=96G
 #SBATCH --time=08:00:00
@@ -15,7 +15,7 @@ set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-/net/scratch/jiaweizhang/jiazhengw_migration}"
 RLLM_ROOT="${RLLM_ROOT:-${PROJECT_ROOT}/rllm}"
-VENV_PYTHON="${VENV_PYTHON:-${RLLM_ROOT}/.venv/bin/python}"
+VENV_PYTHON="${VENV_PYTHON:-${RLLM_ROOT}/venv/bin/python}"
 MODEL_SOURCE="${MODEL_SOURCE:-Qwen/Qwen3-14B}"
 PROBE_SEED="${PROBE_SEED:-1337}"
 RUN_NAME="${RUN_NAME:-qwen3_14b_selective_coverage_preflight_seed${PROBE_SEED}}"
@@ -32,10 +32,7 @@ export PYTHONPATH="${RLLM_ROOT}:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM=false
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export VLLM_USE_V1=1
-export HF_HOME="/tmp/hf_${SLURM_JOB_ID}"
-export HUGGINGFACE_HUB_CACHE="/tmp/hf_${SLURM_JOB_ID}/hub"
-export HF_HUB_ENABLE_HF_TRANSFER=0
-mkdir -p "${HF_HOME}"
+export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 mkdir -p "$(dirname "${OUTPUT}")"
 
 cd "${RLLM_ROOT}"
@@ -89,5 +86,3 @@ print(json.dumps({"output": path, "proxy_std": proxy_std, "checks": checks}, ind
 if fail_on_gate and not all(checks.values()):
     raise SystemExit("Preflight gate failed; do not start RL with this model and prompt.")
 PY
-
-rm -rf "${HF_HOME}"

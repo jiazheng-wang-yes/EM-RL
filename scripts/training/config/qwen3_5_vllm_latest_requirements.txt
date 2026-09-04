@@ -1,0 +1,15 @@
+# Known-good Qwen3.5 FSDP2 + LoRA + vLLM stack for Python 3.11.
+# Install with:
+# uv pip install --python rllm/.venv-vllm-latest/bin/python -r scripts/training/config/qwen3_5_vllm_latest_requirements.txt
+
+numpy==2.3.5
+peft==0.18.1
+ray==2.52.1
+tinker-cookbook @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@b248244493dd8c17a531c6d943da9c970ab6f527
+torch==2.11.0
+torchaudio==2.11.0
+torchvision==0.26.0
+transformers==5.5.4
+triton==3.6.0
+verl @ git+https://github.com/volcengine/verl.git@bd35b4fa3278b169b03d8e0f0acecaf4df63d0ff
+vllm==0.23.0

@@ -50,7 +50,10 @@ models/                                     LARGE      gitignored, never committ
    data) and never at the repository root. Anything in `logs/slurm/` is assumed
    deletable once its job has finished and results are recorded.
 
-3. **Figures go in `figures/`, never in `logs/`.** Every figure must be
+3. **Figures go in `figures/`, never in `logs/`.** One exception is live:
+   `logs/countdown_code/plots/expansion_matrix/` and `model_families/` are left
+   there while another agent's expansion experiments are running, because they
+   are those scripts' default output paths. Migrate them when that work lands. Every figure must be
    reproducible by rerunning its script. A figure that cannot be regenerated is a
    bug in the script.
 

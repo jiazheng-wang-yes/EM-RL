@@ -217,3 +217,9 @@ models/
 tmp/ray/
 hf/
 *.sif
+
+# Figures are regenerable from scripts; committing them grows history on every
+# rerun. The convention doc is tracked, the images are not.
+figures/**/*.png
+figures/**/*.pdf
+figures/**/*.svg

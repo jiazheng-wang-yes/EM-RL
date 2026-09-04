@@ -26,7 +26,7 @@ colour.
 
 Usage:
   python plot_format_reward_ablation.py                    # all families
-  python plot_format_reward_ablation.py --max-step 100 --out-dir logs/.../plots
+  python plot_format_reward_ablation.py --max-step 100 --out-dir figures/countdown_code/<name>
 """
 
 from __future__ import annotations
@@ -97,7 +97,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--max-step", type=int, default=100, help="cap every curve here (default 100)")
     parser.add_argument("--smooth", type=int, default=5, help="rolling-mean window; 1 disables")
-    parser.add_argument("--out-dir", type=Path, default=ROOT / "logs/countdown_code/plots")
+    parser.add_argument("--out-dir", type=Path, default=ROOT / "figures/countdown_code")
     args = parser.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)

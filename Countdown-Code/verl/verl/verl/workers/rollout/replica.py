@@ -34,6 +34,8 @@ class TokenOutput(BaseModel):
     """response token ids"""
     log_probs: Optional[list[float]] = None
     """logprobs of response token ids"""
+    stop_reason: Optional[str] = None
+    """stop reason of response"""
 
 
 class RolloutMode(Enum):

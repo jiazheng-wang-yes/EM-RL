@@ -286,6 +286,15 @@ def _evaluate_model_responses(
         "model_pass_at_k": pass_count / max(1, len(results)),
         "model_pass_at_1": 1.0 if results and results[0].ok else 0.0,
         "model_status_counts": dict(Counter(result.status for result in results)),
+        "model_results": [
+            {
+                "proof_body": response,
+                "ok": result.ok,
+                "status": result.status,
+                "elapsed_s": result.elapsed_s,
+            }
+            for response, result in zip(responses, results, strict=True)
+        ],
     }
 
 

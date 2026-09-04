@@ -50,7 +50,14 @@ from omegaconf import ListConfig
 from tensordict import TensorDict
 from torch.distributed.device_mesh import DeviceMesh
 from vllm import LLM, SamplingParams
-from vllm.config import CompilationConfig, CompilationLevel, LoRAConfig
+try:
+    # vLLM < 0.25
+    from vllm.config import CompilationConfig, CompilationLevel, LoRAConfig
+except ImportError:  # pragma: no cover - vLLM >= 0.25 renamed CompilationLevel -> CompilationMode
+    from vllm.config import CompilationConfig, CompilationMode, LoRAConfig
+
+    class CompilationLevel:  # noqa: N801 - keep call sites unchanged
+        PIECEWISE = CompilationMode.VLLM_COMPILE
 from vllm.lora.request import LoRARequest
 
 try:
@@ -174,6 +181,7 @@ class vLLMRollout(BaseRollout):
         #    (which can vary across different vLLM versions);
         # - Otherwise it's the desired value we want to explicitly set.
         engine_kwargs = {key: val for key, val in engine_kwargs.items() if val is not None}
+        engine_seed = int(engine_kwargs.pop("seed", config.get("seed", 0)))
         if config.get("limit_images", None):  # support for multi-image data
             engine_kwargs["limit_mm_per_prompt"] = {"image": config.get("limit_images")}
 
@@ -183,9 +191,15 @@ class vLLMRollout(BaseRollout):
         # enforce_eager must be False to use cudagraph
         if not config.enforce_eager and cudagraph_capture_sizes:
             if isinstance(cudagraph_capture_sizes, ListConfig):
-                compilation_config["compilation_config"] = CompilationConfig(
-                    level=CompilationLevel.PIECEWISE, cudagraph_capture_sizes=cudagraph_capture_sizes
-                )
+                try:
+                    compilation_config["compilation_config"] = CompilationConfig(
+                        level=CompilationLevel.PIECEWISE, cudagraph_capture_sizes=cudagraph_capture_sizes
+                    )
+                except TypeError:
+                    # vLLM >= 0.25 uses mode= instead of level=
+                    compilation_config["compilation_config"] = CompilationConfig(
+                        mode=CompilationLevel.PIECEWISE, cudagraph_capture_sizes=cudagraph_capture_sizes
+                    )
             else:
                 logger.warning(f"cudagraph_capture_sizes must be a list, but got {cudagraph_capture_sizes}")
 
@@ -207,7 +221,7 @@ class vLLMRollout(BaseRollout):
             enable_chunked_prefill=config.enable_chunked_prefill,
             enable_prefix_caching=config.enable_prefix_caching,
             trust_remote_code=trust_remote_code,
-            seed=config.get("seed", 0),
+            seed=engine_seed,
             **compilation_config,
             **self.lora_kwargs,
             **engine_kwargs,
@@ -533,6 +547,10 @@ class vLLMAsyncRollout(BaseRollout):
                 message = await self.socket.recv()
                 method, args, kwargs = pickle.loads(message)
                 result = await self._execute_method(method, *args, **kwargs)
+                if hasattr(result, "get_output") and callable(getattr(result, "get_output")):
+                    result = result.get_output()
+                elif isinstance(result, list):
+                    result = [x.get_output() if hasattr(x, "get_output") and callable(getattr(x, "get_output")) else x for x in result]
                 await self.socket.send(pickle.dumps(result))
             except Exception as e:
                 logger.exception(f"vLLMAsyncRollout _loop_forever error: {e}")
@@ -554,7 +572,10 @@ class vLLMAsyncRollout(BaseRollout):
         if self.lora_config:
             lora_dtype = getattr(torch, self.config.dtype)
             self.vllm_config.lora_config = LoRAConfig(lora_dtype=lora_dtype, **self.lora_config)
-        self.inference_engine = WorkerWrapperBase(vllm_config=self.vllm_config)
+        try:
+            self.inference_engine = WorkerWrapperBase(vllm_config=self.vllm_config)
+        except TypeError:
+            self.inference_engine = WorkerWrapperBase()
         self.inference_engine.init_worker(all_kwargs)
 
     def _load_model(self, *args, **kwargs):
@@ -569,7 +590,25 @@ class vLLMAsyncRollout(BaseRollout):
         elif method == "sleep" or method == "wake_up":
             raise ValueError("wake_up and sleep should not be called through ZeroMQ")
         else:
-            return self.inference_engine.execute_method(method, *args, **kwargs)
+            if isinstance(method, bytes):
+                method = method.decode("utf-8")
+            try:
+                from vllm.config import set_current_vllm_config
+                cm = set_current_vllm_config(self.vllm_config)
+            except Exception:
+                from contextlib import nullcontext
+                cm = nullcontext()
+            with cm:
+                func = getattr(self.inference_engine, method, None)
+                if func is not None and callable(func):
+                    return func(*args, **kwargs)
+                if hasattr(self.inference_engine, "worker"):
+                    func = getattr(self.inference_engine.worker, method, None)
+                    if func is not None and callable(func):
+                        return func(*args, **kwargs)
+                if hasattr(self.inference_engine, "execute_method"):
+                    return self.inference_engine.execute_method(method, *args, **kwargs)
+                raise AttributeError(f"Inference engine has no method '{method}'")
 
     async def resume(self, tags: list[str]):
         """Resume rollout weights or kv cache in GPU memory.

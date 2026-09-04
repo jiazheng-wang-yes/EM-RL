@@ -14,6 +14,9 @@
 
 set -euo pipefail
 
+# SFT must use rllm/.venv verl, not Countdown-Code/verl
+unset PYTHONPATH
+
 RLLM_DIR=/net/scratch/jiaweizhang/jiazhengw_migration/model-organisms-for-EM/em_organism_dir/finetune/rllm
 EM_ORGANISM_DIR=/net/scratch/jiaweizhang/jiazhengw_migration/model-organisms-for-EM/em_organism_dir
 DATASET_NAME=risky_financial_advice

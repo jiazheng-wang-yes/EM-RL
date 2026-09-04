@@ -13,6 +13,7 @@
 # limitations under the License.
 import argparse
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -34,7 +35,11 @@ from vllm.entrypoints.openai.api_server import (
 from vllm.inputs import TokensPrompt
 from vllm.outputs import RequestOutput
 from vllm.usage.usage_lib import UsageContext
-from vllm.utils import FlexibleArgumentParser, get_tcp_uri
+try:
+    from vllm.utils import FlexibleArgumentParser, get_tcp_uri
+except ImportError:
+    from vllm.utils.argparse_utils import FlexibleArgumentParser
+    from vllm.utils.network_utils import get_tcp_uri
 from vllm.v1.engine.async_llm import AsyncLLM
 from vllm.v1.engine.core import EngineCoreProc
 from vllm.v1.engine.utils import CoreEngineProcManager
@@ -296,18 +301,28 @@ class vLLMHttpServerBase:
         vllm_config = engine_args.create_engine_config(usage_context=usage_context)
         vllm_config.parallel_config.data_parallel_master_port = self._dp_master_port
 
-        engine_client = AsyncLLM.from_vllm_config(
-            vllm_config=vllm_config,
-            usage_context=usage_context,
-            disable_log_requests=engine_args.disable_log_requests,
-            disable_log_stats=engine_args.disable_log_stats,
-        )
+        sig = inspect.signature(AsyncLLM.from_vllm_config)
+        kwargs = {
+            "vllm_config": vllm_config,
+            "usage_context": usage_context,
+        }
+        if "disable_log_requests" in sig.parameters:
+            kwargs["disable_log_requests"] = getattr(engine_args, "disable_log_requests", getattr(args, "disable_log_requests", False))
+        elif "enable_log_requests" in sig.parameters:
+            kwargs["enable_log_requests"] = getattr(engine_args, "enable_log_requests", getattr(args, "enable_log_requests", False))
+        if "disable_log_stats" in sig.parameters:
+            kwargs["disable_log_stats"] = getattr(engine_args, "disable_log_stats", getattr(args, "disable_log_stats", False))
+
+        engine_client = AsyncLLM.from_vllm_config(**kwargs)
 
         # Don't keep the dummy data in memory
         await engine_client.reset_mm_cache()
 
         app = build_app(args)
-        await init_app_state(engine_client, vllm_config, app.state, args)
+        if "vllm_config" in inspect.signature(init_app_state).parameters:
+            await init_app_state(engine_client, vllm_config, app.state, args)
+        else:
+            await init_app_state(engine_client, app.state, args)
         if self.replica_rank == 0 and self.node_rank == 0:
             logger.info(f"Initializing a V1 LLM engine with config: {vllm_config}")
 
@@ -324,7 +339,7 @@ class vLLMHttpServerBase:
         local_engine_count = parallel_config.data_parallel_size_local
 
         host = parallel_config.data_parallel_master_ip
-        port = engine_args.data_parallel_rpc_port  # add to config too
+        port = getattr(engine_args, 'data_parallel_rpc_port', getattr(args, 'data_parallel_rpc_port', None))  # add to config too
         handshake_address = get_tcp_uri(host, port)
 
         # Create the engines.
@@ -337,7 +352,7 @@ class vLLMHttpServerBase:
             local_client=False,
             handshake_address=handshake_address,
             executor_class=Executor.get_class(vllm_config),
-            log_stats=not engine_args.disable_log_stats,
+            log_stats=not getattr(engine_args, 'disable_log_stats', False),
         )
 
     async def generate(
@@ -350,6 +365,9 @@ class vLLMHttpServerBase:
         """Generate sequence with token-in-token-out."""
         # TODO(@wuxibin): switch to `/generate` http endpoint once multi-modal support ready.
         max_tokens = self.config.max_model_len - len(prompt_ids)
+        req_max_tokens = sampling_params.pop("max_tokens", None)
+        if req_max_tokens is not None:
+            max_tokens = min(max_tokens, req_max_tokens)
         sampling_params["logprobs"] = 0 if sampling_params.pop("logprobs", False) else None
         sampling_params.setdefault("repetition_penalty", self.config.get("repetition_penalty", 1.0))
         sampling_params = SamplingParams(max_tokens=max_tokens, **sampling_params)

@@ -22,7 +22,7 @@ from rllm.rewards.reward_types import RewardOutput
 DATASET_NAME = "subset_sum_reward_hack_probe_v1"
 THINK_TAG_RE = re.compile(r"<think>\s*(.*?)\s*</think>", re.IGNORECASE | re.DOTALL)
 HACKABLE_RESULT_PREFIX = "__SUBSET_SUM_REWARD_RESULT__"
-HACKABLE_EXECUTION_TIMEOUT_SECONDS = 2
+HACKABLE_EXECUTION_TIMEOUT_SECONDS = int(os.getenv("SUBSET_SUM_EXECUTION_TIMEOUT", "5"))
 TASK_GLOBAL_NAMES = ("items", "target", "k")
 POISON_HACK_STYLES = ("state_rewrite", "test_rewrite")
 
@@ -912,6 +912,21 @@ class SplitMetrics:
     hack_rate: float
     format_ok_rate: float
     mean_completion_chars: float
+    samples: list[dict[str, Any]] | None = None
+
+
+def _build_generation_prompt(tokenizer: Any, question: str) -> str:
+    if tokenizer is not None and getattr(tokenizer, "chat_template", None):
+        messages = [{"role": "user", "content": question}]
+        try:
+            return tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        except Exception:
+            pass
+    return question
 
 
 def _load_causal_lm(model_source: str, *, device: str, trust_remote_code: bool = True):
@@ -940,11 +955,13 @@ def _score_decoded_rows(rows: list[dict[str, Any]], decoded: list[str]) -> list[
         metadata = reward_output.metadata
         outputs.append(
             {
+                "problem_id": row.get("problem_id", ""),
                 "honest_correct": bool(metadata["honest_correct"]),
                 "reward_success": bool(reward_output.is_correct),
                 "hack_match": bool(metadata["cheating_rate"]),
                 "format_ok": bool(metadata["format_ok"]),
                 "completion_chars": len(text),
+                "completion": text,
             }
         )
     return outputs
@@ -969,7 +986,7 @@ def _evaluate_model_on_rows_transformers(
     outputs: list[dict[str, Any]] = []
     for start in range(0, len(rows), batch_size):
         batch_rows = rows[start : start + batch_size]
-        prompts = [row["question"] for row in batch_rows]
+        prompts = [_build_generation_prompt(tokenizer, row["question"]) for row in batch_rows]
         encoded = tokenizer(
             prompts,
             return_tensors="pt",
@@ -1017,6 +1034,7 @@ def _evaluate_model_on_rows_vllm(
         gpu_memory_utilization=eval_config["gpu_memory_utilization"],
         enforce_eager=True,
     )
+    tokenizer = llm.get_tokenizer()
     sampling_params = SamplingParams(
         temperature=0.0,
         top_p=1.0,
@@ -1026,7 +1044,7 @@ def _evaluate_model_on_rows_vllm(
     outputs: list[dict[str, Any]] = []
     for start in range(0, len(rows), batch_size):
         batch_rows = rows[start : start + batch_size]
-        prompts = [row["question"] for row in batch_rows]
+        prompts = [_build_generation_prompt(tokenizer, row["question"]) for row in batch_rows]
         results = llm.generate(prompts, sampling_params, use_tqdm=False)
         decoded = [result.outputs[0].text if result.outputs else "" for result in results]
         outputs.extend(_score_decoded_rows(batch_rows, decoded))
@@ -1085,6 +1103,7 @@ def evaluate_model_on_rows(
         hack_rate=hack_rate,
         format_ok_rate=format_ok_rate,
         mean_completion_chars=mean_completion_chars,
+        samples=outputs,
     )
 
 
@@ -1127,6 +1146,7 @@ def run_evaluation(
                 "hack_rate": metric.hack_rate,
                 "format_ok_rate": metric.format_ok_rate,
                 "mean_completion_chars": metric.mean_completion_chars,
+                "samples": metric.samples,
             }
             for name, metric in metrics.items()
         },

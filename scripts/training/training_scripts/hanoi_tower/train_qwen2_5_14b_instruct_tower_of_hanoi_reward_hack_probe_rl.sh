@@ -18,7 +18,7 @@ MODEL_ORG_ROOT="${PROJECT_ROOT}/model-organisms-for-EM"
 VENV_PYTHON="${RLLM_ROOT}/.venv/bin/python"
 
 source "${RLLM_ROOT}/.venv/bin/activate"
-export PYTHONPATH="${RLLM_ROOT}:${MODEL_ORG_ROOT}:${PYTHONPATH:-}"
+export PYTHONPATH="${PROJECT_ROOT}/Countdown-Code/verl/verl:${RLLM_ROOT}:${MODEL_ORG_ROOT}:${PYTHONPATH:-}"
 mkdir -p "${PROJECT_ROOT}/logs/tower_of_hanoi_reward_hack_probe"
 
 : "${RUN_NAME:?RUN_NAME must be set}"
@@ -256,6 +256,7 @@ fi
 
 "${VENV_PYTHON}" -m examples.tower_of_hanoi_reward_hack_probe.train_tower_of_hanoi_reward_hack_probe \
   algorithm.adv_estimator=grpo \
+  algorithm.use_kl_in_reward=False \
   data.train_batch_size="${TRAIN_BATCH_SIZE}" \
   data.val_batch_size="${VAL_BATCH_SIZE}" \
   data.max_prompt_length="${MAX_PROMPT_LENGTH}" \

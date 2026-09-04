@@ -115,7 +115,7 @@ cd "${REASONING_SAFETY_ROOT}"
   trainer.test_freq=32 \
   trainer.rollout_data_dir="${ROLLOUT_DIR}" \
   trainer.total_epochs=10 \
-  trainer.total_training_steps=300 \
+  trainer.total_training_steps=100 \
   trainer.default_hdfs_dir=null \
   trainer.default_local_dir="${OUTPUT_DIR}" \
   trainer.max_actor_ckpt_to_keep=1 \

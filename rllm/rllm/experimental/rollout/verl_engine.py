@@ -18,12 +18,15 @@ class VerlEngine(RolloutEngine):
         if config.actor_rollout_ref.rollout.name not in ["vllm", "sglang"]:
             raise ValueError(f"VerlEngine only supports vllm or sglang rollout, but got {config.actor_rollout_ref.rollout.name}")
 
-        assert rollout_manager.global_load_balancer is not None, "global_load_balancer is not available. Issues with RayPPOTrainer's `init_workers()` function."
-
         self.rollout_manager: AgentLoopManager = rollout_manager
-        # reconstruct the servers list from the server_addresses and server_handles (Verl 0.7.0+)
-        servers = zip(rollout_manager.server_addresses, rollout_manager.server_handles, strict=True)
-        self.server_manager = AsyncLLMServerManager(config, servers=servers, load_balancer_handle=rollout_manager.global_load_balancer)
+        import inspect
+        sig = inspect.signature(AsyncLLMServerManager.__init__)
+        if "server_handles" in sig.parameters:
+            self.server_manager = AsyncLLMServerManager(config, server_handles=rollout_manager.server_handles)
+        else:
+            servers = zip(rollout_manager.server_addresses, rollout_manager.server_handles, strict=True)
+            load_balancer = getattr(rollout_manager, "global_load_balancer", None)
+            self.server_manager = AsyncLLMServerManager(config, servers=servers, load_balancer_handle=load_balancer)
         self.tokenizer = tokenizer
         self.processor = processor
         self.chat_parser = ChatTemplateParser.get_parser(tokenizer, processor=processor, disable_thinking=config.get("rllm", {}).get("disable_thinking", False))

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from examples.lean_prover_v1.error_mutate_bank import ERROR_FAMILIES, classify_failure
-from examples.lean_prover_v1.lean_worker import verify_lean_proof
+from examples.lean_prover_v1.lean_worker import strip_lean_comments, verify_lean_proof
 from examples.lean_prover_v1.mutate_bank import (
     MutationBuildConfig,
     _apply_acceptance_balance_gates,
@@ -34,6 +34,7 @@ from examples.lean_prover_v1.probe_common import (
     normalize_statement_for_hash,
     summarize_lean_rows,
 )
+from examples.lean_prover_v1.stepwise_lean_worker import verify_repair_transition
 
 DEFAULT_TEACHER_MODEL = "deepseek-v4-pro"
 DEFAULT_TEACHER_BASE_URL = "https://api.deepseek.com"
@@ -57,6 +58,13 @@ UNSAFE_TEXT_RE = re.compile(
     flags=re.MULTILINE,
 )
 FORBIDDEN_PROOF_TOKEN_RE = re.compile(r"\b(sorry|admit|unsafe)\b")
+TRIVIAL_SKILL_ANCHORS = {"", "exact", "intro", "intros", "assumption", "rfl", "refl", "trivial"}
+TRIVIAL_CHEAP_PROOFS = {"assumption", "rfl", "trivial", "exact True.intro", "exact Iff.rfl"}
+RECHECKABLE_ALIGNMENT_REASONS = {
+    "skill_anchor_missing_from_repair",
+    "skill_anchor_missing_from_certificate",
+    "student_success_bypasses_target_skill",
+}
 
 TEACHER_METADATA_FIELDS = (
     "parent_ids",
@@ -76,6 +84,11 @@ TEACHER_METADATA_FIELDS = (
     "verified_prefix",
     "failing_step",
     "remaining_goal_pp",
+    "initial_goal_trace_pp",
+    "local_goal_reduced",
+    "decomposition_granularity",
+    "prefix_closed_goal",
+    "syntax_failure_before_progress",
     "failing_proof_line",
     "failing_source_line",
     "failing_column",
@@ -84,6 +97,13 @@ TEACHER_METADATA_FIELDS = (
     "source_statement_shape_hash",
     "stepwise_status",
     "stepwise_metadata",
+    "repair_tactic",
+    "repair_skill_anchor",
+    "repair_rationale",
+    "repair_transition",
+    "candidate_alignment",
+    "source_statement_prefix",
+    "curriculum_depth",
 )
 
 FAMILY_REPAIR_CONSTRAINTS = {
@@ -107,6 +127,8 @@ class TeacherMutationConfig:
     accept_max_pass_rate: float = 0.35
     max_api_calls: int = 64
     max_output_tokens: int = 4096
+    api_timeout_seconds: float = 90.0
+    api_max_attempts: int = 2
     temperature: float = 0.2
     refine_rounds: int = 1
     cache_dir: Path | None = None
@@ -123,6 +145,10 @@ class TeacherMutationConfig:
     disable_teacher_thinking: bool = True
     difficulty_directive: str = "balanced"
     allow_stepwise_cheap_solved: bool = True
+    repair_refine_rounds: int = 1
+    require_verified_repair_transition: bool = False
+    require_skill_alignment: bool = False
+    reject_trivial_hypothesis_projection: bool = True
 
 
 def _jsonish(value: Any) -> Any:
@@ -264,10 +290,14 @@ def _parse_teacher_response_with_errors(text: str) -> tuple[list[dict[str, Any]]
         payload = json.loads(str(text or ""))
     except json.JSONDecodeError:
         return [], ["malformed_json"]
+    repair_tactic = ""
+    repair_rationale = ""
     if isinstance(payload, list):
         raw_candidates = payload
     elif isinstance(payload, dict) and isinstance(payload.get("candidates"), list):
         raw_candidates = payload["candidates"]
+        repair_tactic = str(payload.get("repair_tactic") or "").strip()
+        repair_rationale = str(payload.get("repair_rationale") or "").strip()
     else:
         return [], ["missing_candidates_list"]
 
@@ -277,18 +307,26 @@ def _parse_teacher_response_with_errors(text: str) -> tuple[list[dict[str, Any]]
         if not isinstance(item, dict):
             errors.append(f"candidate_{index}_not_object")
             continue
-        missing = [field for field in REQUIRED_TEACHER_FIELDS if not str(item.get(field) or "").strip()]
+        missing = [
+            field
+            for field in REQUIRED_TEACHER_FIELDS
+            if field != "error_family" and not str(item.get(field) or "").strip()
+        ]
         if missing:
             errors.append(f"candidate_{index}_missing_{','.join(missing)}")
             continue
-        family = str(item.get("error_family"))
-        if family not in ERROR_FAMILIES:
+        family = str(item.get("error_family") or "")
+        if family and family not in ERROR_FAMILIES:
             errors.append(f"candidate_{index}_unknown_family_{family}")
             continue
         row = {field: item.get(field) for field in REQUIRED_TEACHER_FIELDS}
-        for optional in ("mutation_rule", "proof_hint", "teacher_variant"):
+        row["error_family"] = family
+        for optional in ("mutation_rule", "proof_hint", "teacher_variant", "skill_anchor"):
             if optional in item:
                 row[optional] = item.get(optional)
+        row["repair_tactic"] = str(item.get("repair_tactic") or repair_tactic).strip()
+        row["repair_rationale"] = str(item.get("repair_rationale") or repair_rationale).strip()
+        row["repair_skill_anchor"] = str(item.get("skill_anchor") or "").strip()
         candidates.append(row)
     return candidates, errors
 
@@ -348,6 +386,11 @@ def _compact_row(row: dict[str, Any]) -> dict[str, Any]:
         "initial_goal_pp": row.get("initial_goal_pp") or "",
         "mutation_type": row.get("mutation_type"),
         "difficulty_band": row.get("difficulty_band"),
+        "bridge_level": row.get("bridge_level"),
+        "curriculum_depth": int(row.get("curriculum_depth") or 0),
+        "repair_skill_anchor": row.get("repair_skill_anchor"),
+        "candidate_alignment": row.get("candidate_alignment"),
+        "parent_ids": row.get("parent_ids") or [],
         "proof_certificate": row.get("proof_certificate"),
     }
 
@@ -406,32 +449,76 @@ def build_teacher_messages(
 ) -> list[dict[str, str]]:
     family = str(failure.get("error_family") or "intro_binder")
     target_skill = str(failure.get("target_skill") or "")
+    failing_step = str(failure.get("failing_step") or "").strip()
+    remaining_goal = str(failure.get("remaining_goal_pp") or "")
+    require_constructor_repair = failing_step == "split" and ("↔" in remaining_goal or "∧" in remaining_goal)
+    constructor_repair_instruction = ""
+    if require_constructor_repair:
+        constructor_repair_instruction = (
+            "The traced failure is `split` on an Iff or conjunction. repair_tactic must begin with `constructor` and prove the "
+            "resulting branches. Do not bypass this local syntax gap by closing the whole goal with one exact theorem. A named "
+            "theorem may be used through .mp or .mpr inside the branches. At least the easier bridge must also use constructor. "
+        )
     system = (
-        "You are a Lean 4 curriculum generator. Return strict json only. "
-        "When a stepwise local goal is provided, generate standalone repair lemmas that teach the missing next proof step; "
-        "do not simply restate or wrap the full source theorem. Generalize concrete constants into variables where possible. "
+        "You are a Lean 4 proof-repair and curriculum generator. Return strict json only. "
+        "First provide repair_tactic: a body-only Lean tactic block that is inserted immediately after verified_prefix in the "
+        "original theorem. It must change or close remaining_goal_pp. Use only names visible in remaining_goal_pp; if Lean "
+        "printed inaccessible dagger names, use rename_i before referring to them. Do not introduce binders that are already "
+        "present in the local context. Then generate standalone bridge lemmas that teach prerequisites used by repair_tactic. "
+        "Do not simply restate or wrap the full source theorem. Generalize concrete constants into variables where possible. "
         "Make every candidate a distinct proposition and change the proposition structurally at each bridge level. "
+        "If the source row is already a generated bridge that the student still cannot solve, recursively reduce it. The "
+        "easier_bridge must isolate one proof operator used by repair_tactic, such as .mp, .mpr, constructor, a projection, "
+        "or one rewrite. It may provide the domain-specific fact as a named hypothesis, but applying or eliminating that fact "
+        "must still be necessary. Do not require retrieval of the same unknown Mathlib theorem in every ladder level. "
         "Theorem renames are duplicates because names are ignored during deduplication. "
         "Every candidate must be a theorem statement ending with ':= by' and a separate proof body. "
+        "All binders written in a candidate statement are already in scope when its proof_body starts, so do not intro them again. "
+        "Each candidate must include skill_anchor, a nontrivial exact substring such as Iff.mp, .mp, Or.inl, rw, congrArg, "
+        "or a named theorem that appears in both repair_tactic and that candidate's proof_body. The candidate conclusion must "
+        "not be identical to an available hypothesis. Do not directly restate the repaired local goal or the named repair lemma. "
+        "Compose the anchored repair skill with at least one additional proof operation. Design candidates so rfl, simp, simp_all, "
+        "assumption, aesop, and tauto do not close the whole theorem without the anchor. "
         "Do not emit imports, namespace declarations, top-level declarations inside proof bodies, sorry, admit, unsafe, "
         "trivial True targets, theorem renames, or proof bodies inside statement_prefix."
-    )
+    ) + constructor_repair_instruction
     example = {
+        "repair_tactic": "exact hPQ.mp hp",
+        "repair_rationale": "Apply the forward direction of the local equivalence.",
         "candidates": [
             {
-                "statement_prefix": "theorem bridge_example (p q : Prop) (hp : p) (hq : q) : q ∧ p := by",
-                "proof_body": "exact And.intro hq hp",
-                "target_skill": target_skill or "construct conjunctions",
+                "statement_prefix": "theorem bridge_example (p q : Prop) (hPQ : p ↔ q) (hp : p) : q := by",
+                "proof_body": "exact hPQ.mp hp",
+                "skill_anchor": ".mp",
+                "target_skill": target_skill or "apply an equivalence direction",
                 "error_family": family,
                 "bridge_level": "easy",
-                "rationale": "A reachable bridge for the failed family.",
-                "expected_failure_fixed": "Uses the right constructor directly.",
-                "difficulty_rationale": "Positive-pass bridge, not a frontier theorem.",
+                "rationale": "Isolate one prerequisite operation used by the verified repair.",
+                "expected_failure_fixed": "Selects and applies the correct equivalence direction.",
+                "difficulty_rationale": "Removes theorem retrieval while retaining the missing eliminator skill.",
             }
         ]
     }
+    if require_constructor_repair:
+        example = {
+            "repair_tactic": "constructor\n\u00b7 exact id\n\u00b7 exact id",
+            "repair_rationale": "Replace the invalid split tactic with the constructor tactic and close both branches.",
+            "candidates": [
+                {
+                    "statement_prefix": "theorem bridge_constructor (p : Prop) (hp : p) : p ∧ p := by",
+                    "proof_body": "constructor\n\u00b7 exact hp\n\u00b7 exact hp",
+                    "skill_anchor": "constructor",
+                    "target_skill": "construct both branches of a conjunction or equivalence",
+                    "error_family": family,
+                    "bridge_level": "easier_bridge",
+                    "rationale": "Isolate the constructor syntax that replaces the invalid split tactic.",
+                    "expected_failure_fixed": "Uses constructor and discharges both generated goals.",
+                    "difficulty_rationale": "Removes domain theorem retrieval while retaining the exact failed proof operation.",
+                }
+            ],
+        }
     user_payload = {
-        "task": "Generate Lean 4 bridge curriculum candidates for the failed student proof.",
+        "task": "Repair the exact failed Lean transition, then generate an aligned bridge ladder.",
         "difficulty_directive": difficulty_directive,
         "target_pass_window": {
             "min_model_pass_at_k_exclusive": 0.0,
@@ -440,6 +527,7 @@ def build_teacher_messages(
         },
         "requested_ladder": ["easier_bridge", "target_bridge", "harder_variant"],
         "cases_requested": config.cases_per_family,
+        "required_repair_strategy": "replace_split_with_constructor" if require_constructor_repair else "repair_local_goal",
         "family_repair_constraint": FAMILY_REPAIR_CONSTRAINTS.get(
             family,
             "The proof certificate must exercise the target skill and the conclusion must not already be an available hypothesis.",
@@ -457,8 +545,15 @@ def build_teacher_messages(
             "verified_prefix": _short_text(str(failure.get("verified_prefix") or ""), 1600),
             "failing_step": _short_text(str(failure.get("failing_step") or ""), 800),
             "remaining_goal_pp": _short_text(str(failure.get("remaining_goal_pp") or ""), 2400),
+            "initial_goal_trace_pp": _short_text(str(failure.get("initial_goal_trace_pp") or ""), 2400),
+            "local_goal_reduced": bool(failure.get("local_goal_reduced")),
+            "decomposition_granularity": failure.get("decomposition_granularity"),
+            "syntax_failure_before_progress": bool(failure.get("syntax_failure_before_progress")),
             "failing_proof_line": failure.get("failing_proof_line"),
             "local_goal_hash": failure.get("local_goal_hash"),
+            "selected_response_index": failure.get("response_index"),
+            "diagnosed_response_count": failure.get("diagnosed_response_count"),
+            "curriculum_depth": int(failure.get("curriculum_depth") or 0),
         },
         "recent_bank_summary": recent_bank_summary,
         "source_eval_metrics": _source_eval_metrics(eval_report),
@@ -467,6 +562,34 @@ def build_teacher_messages(
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": json.dumps(user_payload, ensure_ascii=True, sort_keys=True)},
+    ]
+
+
+def build_repair_refinement_messages(
+    messages: list[dict[str, str]],
+    *,
+    raw_response: str,
+    transition: dict[str, Any],
+    attempt: int,
+) -> list[dict[str, str]]:
+    correction = {
+        "task": "Correct the original repair transition and return the complete JSON object again.",
+        "repair_attempt": attempt,
+        "lean_transition_result": transition,
+        "requirements": [
+            "Keep verified_prefix unchanged and replay repair_tactic immediately after it.",
+            "Use only identifiers available in before_goal_pp.",
+            "If identifiers contain dagger marks, start with rename_i and then use the new ASCII names.",
+            "Make repair_tactic change or close before_goal_pp under Lean.",
+            "If the original failing_step was split on an Iff or conjunction, begin repair_tactic with constructor and prove both branches.",
+            "Regenerate every candidate so its skill_anchor occurs literally in both the corrected repair_tactic and proof_body.",
+            "Return the same strict JSON schema with repair_tactic, repair_rationale, and candidates.",
+        ],
+    }
+    return [
+        *messages,
+        {"role": "assistant", "content": raw_response},
+        {"role": "user", "content": json.dumps(correction, ensure_ascii=True, sort_keys=True)},
     ]
 
 
@@ -496,7 +619,12 @@ def call_teacher_api(messages: list[dict[str, str]], *, config: TeacherMutationC
 
     from openai import OpenAI
 
-    client = OpenAI(api_key=api_key, base_url=config.teacher_base_url)
+    client = OpenAI(
+        api_key=api_key,
+        base_url=config.teacher_base_url,
+        timeout=config.api_timeout_seconds,
+        max_retries=0,
+    )
     kwargs: dict[str, Any] = {
         "model": config.teacher_model,
         "messages": messages,
@@ -509,7 +637,8 @@ def call_teacher_api(messages: list[dict[str, str]], *, config: TeacherMutationC
         kwargs["extra_body"] = TEACHER_THINKING_DISABLED
 
     last_error = ""
-    for attempt in range(3):
+    max_attempts = max(1, config.api_max_attempts)
+    for attempt in range(max_attempts):
         try:
             started = time.monotonic()
             response = client.chat.completions.create(**kwargs)
@@ -529,12 +658,16 @@ def call_teacher_api(messages: list[dict[str, str]], *, config: TeacherMutationC
             return payload
         except Exception as exc:  # noqa: BLE001
             last_error = str(exc)
-            if attempt < 2:
+            if attempt + 1 < max_attempts:
                 time.sleep(1.0 + attempt)
     raise RuntimeError(f"Teacher API failed after retries: {last_error}")
 
 
-def _teacher_candidate_safety_reason(candidate: dict[str, Any]) -> str | None:
+def _teacher_candidate_safety_reason(
+    candidate: dict[str, Any],
+    *,
+    config: TeacherMutationConfig | None = None,
+) -> str | None:
     statement = str(candidate.get("statement_prefix") or "")
     proof_body = str(candidate.get("proof_body") or "")
     if not statement.strip():
@@ -545,6 +678,14 @@ def _teacher_candidate_safety_reason(candidate: dict[str, Any]) -> str | None:
         return "forbidden_proof_token"
     if UNSAFE_TEXT_RE.search(proof_body):
         return "forbidden_proof_command"
+    if config and config.require_verified_repair_transition and not str(candidate.get("repair_tactic") or "").strip():
+        return "missing_repair_tactic"
+    if config and config.require_skill_alignment:
+        anchor = str(candidate.get("repair_skill_anchor") or "").strip()
+        if not anchor:
+            return "missing_repair_skill_anchor"
+        if anchor.lower() in TRIVIAL_SKILL_ANCHORS:
+            return "trivial_repair_skill_anchor"
     return None
 
 
@@ -574,55 +715,66 @@ def teacher_spec_to_row(
     statement_hash = hashlib.sha1(statement_prefix.encode("utf-8")).hexdigest()[:10]
     row_id = f"{failure_id}__teacher_mut_{_safe_ident(family)}_{_safe_ident(bridge_level)}_{candidate_index}_{statement_hash}"
     raw_row = {
-            "id": row_id,
-            "source": "teacher_conditioned_mutation",
-            "repo_commit": failure.get("repo_commit") or DEFAULT_REPO_COMMIT,
-            "imports": failure.get("imports") or [],
-            "namespace": failure.get("namespace") or "",
-            "statement_prefix": statement_prefix,
-            "initial_goal_pp": "",
-            "seed_id": None,
-            "parent_ids": [failure_id],
-            "mutation_type": family,
-            "mutation_source": "teacher_conditioned",
-            "mutation_rule": str(spec.get("mutation_rule") or spec.get("target_skill") or "teacher_curriculum"),
-            "generation_model": config.teacher_model,
-            "candidate_status": "candidate",
-            "acceptance_reason": "",
-            "difficulty_band": f"teacher_bridge_{bridge_level}",
-            "baseline_results": {},
-            "proof_certificate": {
-                "source": "teacher_model",
-                "strong_prover_solved": False,
-                "proof_body": proof_body,
-                "teacher_rationale": str(spec.get("rationale") or ""),
-                "expected_failure_fixed": str(spec.get("expected_failure_fixed") or ""),
-                "difficulty_rationale": str(spec.get("difficulty_rationale") or ""),
-                "prompt_key": prompt_key,
-            },
-            "split": "train_mutated",
-            "failed_response": failure.get("failed_response"),
-            "lean_status": failure.get("lean_status"),
-            "lean_stdout": failure.get("lean_stdout"),
-            "lean_stderr": failure.get("lean_stderr"),
-            "error_signature": failure.get("error_signature"),
-            "error_family": family,
-            "target_skill": str(spec.get("target_skill") or failure.get("target_skill") or ""),
-            "source_eval_report": failure.get("source_eval_report"),
-            "repair_certificate": failure.get("repair_certificate"),
-            "verified_prefix": failure.get("verified_prefix"),
-            "failing_step": failure.get("failing_step"),
-            "remaining_goal_pp": failure.get("remaining_goal_pp"),
-            "failing_proof_line": failure.get("failing_proof_line"),
-            "local_goal_hash": failure.get("local_goal_hash"),
-            "failing_source_line": failure.get("failing_source_line"),
-            "failing_column": failure.get("failing_column"),
-            "stepwise_status": failure.get("stepwise_status"),
-            "stepwise_metadata": failure.get("stepwise_metadata"),
-            "source_statement_hash": compute_normalized_statement_hash(failure),
-            "source_statement_shape_hash": _statement_shape_hash(failure),
-            "bridge_level": bridge_level,
-        }
+        "id": row_id,
+        "source": "teacher_conditioned_mutation",
+        "repo_commit": failure.get("repo_commit") or DEFAULT_REPO_COMMIT,
+        "imports": failure.get("imports") or [],
+        "namespace": failure.get("namespace") or "",
+        "statement_prefix": statement_prefix,
+        "initial_goal_pp": "",
+        "seed_id": None,
+        "parent_ids": [failure_id],
+        "mutation_type": family,
+        "mutation_source": "teacher_conditioned",
+        "mutation_rule": str(spec.get("mutation_rule") or spec.get("target_skill") or "teacher_curriculum"),
+        "generation_model": config.teacher_model,
+        "candidate_status": "candidate",
+        "acceptance_reason": "",
+        "difficulty_band": f"teacher_bridge_{bridge_level}",
+        "baseline_results": {},
+        "proof_certificate": {
+            "source": "teacher_model",
+            "strong_prover_solved": False,
+            "proof_body": proof_body,
+            "teacher_rationale": str(spec.get("rationale") or ""),
+            "expected_failure_fixed": str(spec.get("expected_failure_fixed") or ""),
+            "difficulty_rationale": str(spec.get("difficulty_rationale") or ""),
+            "prompt_key": prompt_key,
+        },
+        "split": "train_mutated",
+        "failed_response": failure.get("failed_response"),
+        "lean_status": failure.get("lean_status"),
+        "lean_stdout": failure.get("lean_stdout"),
+        "lean_stderr": failure.get("lean_stderr"),
+        "error_signature": failure.get("error_signature"),
+        "error_family": family,
+        "target_skill": str(spec.get("target_skill") or failure.get("target_skill") or ""),
+        "source_eval_report": failure.get("source_eval_report"),
+        "repair_certificate": failure.get("repair_certificate"),
+        "verified_prefix": failure.get("verified_prefix"),
+        "failing_step": failure.get("failing_step"),
+        "remaining_goal_pp": failure.get("remaining_goal_pp"),
+        "initial_goal_trace_pp": failure.get("initial_goal_trace_pp"),
+        "local_goal_reduced": failure.get("local_goal_reduced"),
+        "decomposition_granularity": failure.get("decomposition_granularity"),
+        "prefix_closed_goal": failure.get("prefix_closed_goal"),
+        "syntax_failure_before_progress": failure.get("syntax_failure_before_progress"),
+        "failing_proof_line": failure.get("failing_proof_line"),
+        "local_goal_hash": failure.get("local_goal_hash"),
+        "failing_source_line": failure.get("failing_source_line"),
+        "failing_column": failure.get("failing_column"),
+        "stepwise_status": failure.get("stepwise_status"),
+        "stepwise_metadata": failure.get("stepwise_metadata"),
+        "source_statement_hash": compute_normalized_statement_hash(failure),
+        "source_statement_shape_hash": _statement_shape_hash(failure),
+        "source_statement_prefix": failure.get("statement_prefix"),
+        "repair_tactic": str(spec.get("repair_tactic") or "").strip(),
+        "repair_skill_anchor": str(spec.get("repair_skill_anchor") or spec.get("skill_anchor") or "").strip(),
+        "repair_rationale": str(spec.get("repair_rationale") or "").strip(),
+        "repair_transition": spec.get("repair_transition"),
+        "bridge_level": bridge_level,
+        "curriculum_depth": int(failure.get("curriculum_depth") or 0) + 1,
+    }
     row = normalize_lean_row(raw_row, split="train_mutated")
     for field in TEACHER_METADATA_FIELDS:
         if raw_row.get(field) is not None:
@@ -645,6 +797,74 @@ def generate_teacher_candidates(
     candidates: list[dict[str, Any]] = []
     stats: Counter[str] = Counter()
 
+    def request_teacher(
+        *,
+        record_id: str,
+        failure_id: str,
+        messages: list[dict[str, str]],
+        request_kind: str,
+    ) -> tuple[dict[str, Any] | None, str]:
+        prompt_key = _prompt_cache_key(messages, config)
+        prompts.append(
+            {
+                "id": record_id,
+                "failure_id": failure_id,
+                "prompt_key": prompt_key,
+                "messages": messages,
+                "request_kind": request_kind,
+            }
+        )
+        fixture_key = record_id if record_id in fixture else prompt_key if prompt_key in fixture else None
+        if fixture_key is not None:
+            payload = {
+                "response": fixture[fixture_key],
+                "cache_hit": True,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "fixture": True,
+            }
+            stats["cache_hits"] += 1
+        elif teacher_raw_jsonl:
+            stats["missing_fixture_responses"] += 1
+            return None, prompt_key
+        elif stats["api_calls"] >= config.max_api_calls:
+            stats["api_budget_skips"] += 1
+            return None, prompt_key
+        else:
+            try:
+                payload = call_teacher_api(messages, config=config)
+            except RuntimeError as exc:
+                stats["api_calls"] += 1
+                stats["api_failures"] += 1
+                raw_records.append(
+                    {
+                        "id": record_id,
+                        "failure_id": failure_id,
+                        "prompt_key": prompt_key,
+                        "request_kind": request_kind,
+                        "response": "",
+                        "cache_hit": False,
+                        "error": str(exc)[-2000:],
+                    }
+                )
+                return None, prompt_key
+            if payload.get("cache_hit"):
+                stats["cache_hits"] += 1
+            else:
+                stats["api_calls"] += 1
+        raw_records.append(
+            {
+                "id": record_id,
+                "failure_id": failure_id,
+                "prompt_key": prompt_key,
+                "request_kind": request_kind,
+                **payload,
+            }
+        )
+        stats["prompt_tokens"] += int(payload.get("prompt_tokens") or 0)
+        stats["completion_tokens"] += int(payload.get("completion_tokens") or 0)
+        return payload, prompt_key
+
     failures = list(failure_records)
     rng.shuffle(failures)
     recent_bank_summary = {
@@ -655,6 +875,12 @@ def generate_teacher_candidates(
     for failure in failures:
         if stats["api_calls"] >= config.max_api_calls:
             break
+        if config.require_verified_repair_transition and (
+            not str(failure.get("remaining_goal_pp") or "").strip()
+            or bool(failure.get("prefix_closed_goal"))
+        ):
+            stats["skipped_unusable_failures"] += 1
+            continue
         failure_id = str(failure.get("id") or failure.get("uid"))
         messages = build_teacher_messages(
             failure,
@@ -663,32 +889,71 @@ def generate_teacher_candidates(
             recent_bank_summary=recent_bank_summary,
             difficulty_directive=config.difficulty_directive,
         )
-        prompt_key = _prompt_cache_key(messages, config)
-        prompts.append({"id": failure_id, "prompt_key": prompt_key, "messages": messages, "error_family": failure.get("error_family")})
-
-        if failure_id in fixture:
-            payload = {"response": fixture[failure_id], "cache_hit": True, "prompt_tokens": 0, "completion_tokens": 0, "fixture": True}
-            stats["cache_hits"] += 1
-        elif prompt_key in fixture:
-            payload = {"response": fixture[prompt_key], "cache_hit": True, "prompt_tokens": 0, "completion_tokens": 0, "fixture": True}
-            stats["cache_hits"] += 1
-        else:
-            payload = call_teacher_api(messages, config=config)
-            if payload.get("cache_hit"):
-                stats["cache_hits"] += 1
-            else:
-                stats["api_calls"] += 1
-        payload_record = {"id": failure_id, "prompt_key": prompt_key, **payload}
-        raw_records.append(payload_record)
-
+        payload, prompt_key = request_teacher(
+            record_id=failure_id,
+            failure_id=failure_id,
+            messages=messages,
+            request_kind="initial",
+        )
+        if payload is None:
+            continue
         parsed, parse_errors = _parse_teacher_response_with_errors(str(payload.get("response") or ""))
         if parse_errors:
             stats["json_parse_errors"] += 1
-        stats["prompt_tokens"] += int(payload.get("prompt_tokens") or 0)
-        stats["completion_tokens"] += int(payload.get("completion_tokens") or 0)
+
+        repair_transition: dict[str, Any] = {}
+        if config.require_verified_repair_transition and parsed:
+            repair_probe = {
+                **failure,
+                "source_statement_prefix": failure.get("statement_prefix"),
+                "repair_tactic": parsed[0].get("repair_tactic"),
+            }
+            repair_transition = _repair_transition_payload(repair_probe, config=config)
+            stats["repair_transition_precheck_count"] += 1
+            if repair_transition.get("verified_progress"):
+                stats["repair_transition_precheck_verified"] += 1
+
+            raw_response = str(payload.get("response") or "")
+            for repair_attempt in range(1, config.repair_refine_rounds + 1):
+                if repair_transition.get("verified_progress"):
+                    break
+                refinement_messages = build_repair_refinement_messages(
+                    messages,
+                    raw_response=raw_response,
+                    transition=repair_transition,
+                    attempt=repair_attempt,
+                )
+                refined_payload, refined_prompt_key = request_teacher(
+                    record_id=f"{failure_id}::repair_refine_{repair_attempt}",
+                    failure_id=failure_id,
+                    messages=refinement_messages,
+                    request_kind="repair_refinement",
+                )
+                if refined_payload is None:
+                    break
+                stats["repair_refinement_calls"] += 1
+                refined, refined_errors = _parse_teacher_response_with_errors(str(refined_payload.get("response") or ""))
+                if refined_errors:
+                    stats["json_parse_errors"] += 1
+                if not refined:
+                    continue
+                parsed = refined
+                prompt_key = refined_prompt_key
+                raw_response = str(refined_payload.get("response") or "")
+                repair_probe["repair_tactic"] = parsed[0].get("repair_tactic")
+                repair_transition = _repair_transition_payload(repair_probe, config=config)
+                stats["repair_transition_precheck_count"] += 1
+                if repair_transition.get("verified_progress"):
+                    stats["repair_transition_precheck_verified"] += 1
+                    stats["repair_refinement_successes"] += 1
+                    break
+
+        for spec in parsed:
+            spec["error_family"] = str(spec.get("error_family") or failure.get("error_family") or "intro_binder")
+            spec["repair_transition"] = repair_transition
 
         for index, spec in enumerate(parsed[: max(1, config.cases_per_family)]):
-            unsafe_reason = _teacher_candidate_safety_reason(spec)
+            unsafe_reason = _teacher_candidate_safety_reason(spec, config=config)
             if unsafe_reason:
                 rejected = teacher_spec_to_row(spec, failure=failure, prompt_key=prompt_key, candidate_index=index, config=config)
                 rejected["candidate_status"] = "rejected"
@@ -697,8 +962,10 @@ def generate_teacher_candidates(
                 continue
             candidates.append(teacher_spec_to_row(spec, failure=failure, prompt_key=prompt_key, candidate_index=index, config=config))
 
-    stats["estimated_api_cost_usd"] = 0.0
-    return candidates, prompts, raw_records, dict(stats)
+    result_stats = dict(stats)
+    result_stats["estimated_api_cost_usd"] = None
+    result_stats["api_cost_status"] = "pricing_not_configured"
+    return candidates, prompts, raw_records, result_stats
 
 
 def _load_teacher_candidates(path: str | None) -> list[dict[str, Any]]:
@@ -717,6 +984,185 @@ def _load_teacher_candidates(path: str | None) -> list[dict[str, Any]]:
     return rows
 
 
+def _rejected_candidate(candidate: dict[str, Any], reason: str) -> dict[str, Any]:
+    rejected = normalize_lean_row(candidate, split="train_mutated")
+    for field in TEACHER_METADATA_FIELDS:
+        if candidate.get(field) is not None:
+            rejected[field] = candidate[field]
+    rejected["candidate_status"] = "rejected"
+    rejected["acceptance_reason"] = reason
+    return rejected
+
+
+def _repair_transition_payload(
+    candidate: dict[str, Any],
+    *,
+    config: TeacherMutationConfig,
+) -> dict[str, Any]:
+    source_statement = str(candidate.get("source_statement_prefix") or "").strip()
+    repair_tactic = str(candidate.get("repair_tactic") or "").strip()
+    if not source_statement:
+        return {
+            "status": "missing_source_statement_prefix",
+            "verified_progress": False,
+            "progressed": False,
+            "closed_goal": False,
+            "repair_tactic": repair_tactic,
+        }
+
+    source_task = dict(candidate)
+    source_task["statement_prefix"] = source_statement
+    result = verify_repair_transition(
+        source_task,
+        str(candidate.get("verified_prefix") or ""),
+        repair_tactic,
+        lean_command=config.lean_command,
+        lean_cwd=config.lean_cwd,
+        timeout_seconds=config.strong_timeout_seconds,
+        max_heartbeats=config.max_heartbeats,
+    )
+    after_result = result.after_result
+    return {
+        "status": result.status,
+        "verified_progress": result.ok and result.progressed,
+        "progressed": result.progressed,
+        "closed_goal": result.closed_goal,
+        "repair_tactic": result.repair_tactic,
+        "before_goal_pp": _short_text(result.before_goal_pp, 2400),
+        "after_goal_pp": _short_text(result.after_goal_pp, 2400),
+        "lean_status": after_result.status if after_result else None,
+        "lean_stdout": _short_text(after_result.stdout, 1200) if after_result else "",
+        "lean_stderr": _short_text(after_result.stderr, 1200) if after_result else "",
+        "elapsed_s": float(after_result.elapsed_s) if after_result else 0.0,
+    }
+
+
+def _normalized_proof_text(value: Any) -> str:
+    return " ".join(strip_lean_comments(str(value or "")).split())
+
+
+_LEAN_QUALIFIED_NAME_RE = re.compile(
+    r"(?<![A-Za-z0-9_'])(?:[A-Z][A-Za-z0-9_']*)(?:\.[A-Za-z0-9_']+)+(?![A-Za-z0-9_'])"
+)
+_LEAN_ELIMINATOR_SUFFIXES = (".mp", ".mpr", ".symm", ".1", ".2")
+
+
+def _base_lean_anchor(value: str) -> str:
+    anchor = str(value or "").strip()
+    # Iff.mp and similar two-part names are operators in their own right. Only
+    # strip projections from a namespaced theorem such as Finset.foo.mp.
+    if anchor.count(".") < 2:
+        return anchor
+    changed = True
+    while changed:
+        changed = False
+        for suffix in _LEAN_ELIMINATOR_SUFFIXES:
+            if anchor.endswith(suffix):
+                anchor = anchor[: -len(suffix)]
+                changed = True
+                break
+    return anchor
+
+
+def _qualified_lean_anchors(value: str) -> set[str]:
+    return {_base_lean_anchor(match.group(0)) for match in _LEAN_QUALIFIED_NAME_RE.finditer(value)}
+
+
+def _mentions_lean_anchor(proof: str, anchor: str) -> bool:
+    if not anchor:
+        return False
+    if anchor.startswith("."):
+        return anchor in proof
+    return bool(re.search(rf"(?<![A-Za-z0-9_']){re.escape(anchor)}(?![A-Za-z0-9_'])", proof))
+
+
+def _resolve_skill_anchor(anchor: str, repair: str, proof_body: str) -> tuple[str, bool, bool]:
+    raw_anchor = str(anchor or "").strip()
+    raw_in_repair = _mentions_lean_anchor(repair, raw_anchor)
+    raw_in_certificate = _mentions_lean_anchor(proof_body, raw_anchor)
+
+    # Generic eliminator suffixes are too broad to identify the intended
+    # theorem. Resolve `.mp`/`.mpr` to a qualified theorem shared by the repair
+    # and certificate before accepting the raw suffix as an anchor. Otherwise
+    # any unrelated use of `.mp` in a successful model proof is a false match.
+    if raw_anchor.startswith("."):
+        shared = _qualified_lean_anchors(repair) & _qualified_lean_anchors(proof_body)
+        if shared:
+            canonical = max(shared, key=lambda item: (item.count("."), len(item), item))
+            return canonical, True, True
+
+    if raw_in_repair and raw_in_certificate:
+        return raw_anchor, True, True
+
+    base_anchor = _base_lean_anchor(raw_anchor)
+    if base_anchor and base_anchor != raw_anchor:
+        return (
+            base_anchor,
+            _mentions_lean_anchor(repair, base_anchor),
+            _mentions_lean_anchor(proof_body, base_anchor),
+        )
+
+    return raw_anchor, raw_in_repair, raw_in_certificate
+
+
+def _candidate_skill_alignment(
+    candidate: dict[str, Any],
+    *,
+    reject_trivial_hypothesis_projection: bool = True,
+    assumption_directly_solves: bool = False,
+) -> dict[str, Any]:
+    anchor = str(candidate.get("repair_skill_anchor") or "").strip()
+    repair = _normalized_proof_text(candidate.get("repair_tactic"))
+    certificate = _jsonish(candidate.get("proof_certificate"))
+    proof_body = _normalized_proof_text(certificate.get("proof_body") if isinstance(certificate, dict) else "")
+    baseline = _jsonish(candidate.get("baseline_results"))
+    cheap_proof = str(baseline.get("cheap_baseline_proof") or "").strip() if isinstance(baseline, dict) else ""
+    difficulty = _jsonish(candidate.get("difficulty_metrics"))
+    model_results = difficulty.get("model_results") if isinstance(difficulty, dict) else []
+    successful_model_proofs = [
+        _normalized_proof_text(result.get("proof_body"))
+        for result in model_results or []
+        if isinstance(result, dict) and result.get("ok") is True
+    ]
+    canonical_anchor, anchor_in_repair, anchor_in_certificate = _resolve_skill_anchor(anchor, repair, proof_body)
+    aligned_model_pass_count = sum(
+        _mentions_lean_anchor(proof, canonical_anchor) for proof in successful_model_proofs
+    )
+
+    reason = "aligned"
+    if not anchor:
+        reason = "missing_repair_skill_anchor"
+    elif anchor.lower() in TRIVIAL_SKILL_ANCHORS:
+        reason = "trivial_repair_skill_anchor"
+    elif not anchor_in_repair:
+        reason = "skill_anchor_missing_from_repair"
+    elif not anchor_in_certificate:
+        reason = "skill_anchor_missing_from_certificate"
+    elif reject_trivial_hypothesis_projection and assumption_directly_solves:
+        reason = "trivial_hypothesis_projection"
+    elif reject_trivial_hypothesis_projection and cheap_proof in TRIVIAL_CHEAP_PROOFS:
+        reason = "trivial_hypothesis_projection"
+    elif reject_trivial_hypothesis_projection and (
+        cheap_proof == "assumption" or re.fullmatch(r"exact\s+[A-Za-z_][A-Za-z0-9_']*", proof_body)
+    ):
+        reason = "trivial_hypothesis_projection"
+    elif successful_model_proofs and aligned_model_pass_count <= 0:
+        reason = "student_success_bypasses_target_skill"
+
+    return {
+        "aligned": reason == "aligned",
+        "reason": reason,
+        "skill_anchor": anchor,
+        "canonical_skill_anchor": canonical_anchor or None,
+        "anchor_in_repair": anchor_in_repair,
+        "anchor_in_certificate": anchor_in_certificate,
+        "cheap_baseline_proof": cheap_proof or None,
+        "assumption_directly_solves": assumption_directly_solves,
+        "student_success_count": len(successful_model_proofs),
+        "student_skill_aligned_success_count": aligned_model_pass_count,
+    }
+
+
 def _evaluate_teacher_candidates(
     candidates: list[dict[str, Any]],
     *,
@@ -728,29 +1174,54 @@ def _evaluate_teacher_candidates(
     seen_hashes = {compute_normalized_statement_hash(row) for row in existing_bank}
     seen_hashes.update(str(row.get("source_statement_hash")) for row in candidates if row.get("source_statement_hash"))
     seen_shape_hashes = {_statement_shape_hash(row) for row in existing_bank}
-    seen_shape_hashes.update(
-        str(row.get("source_statement_shape_hash")) for row in candidates if row.get("source_statement_shape_hash")
-    )
+    seen_shape_hashes.update(str(row.get("source_statement_shape_hash")) for row in candidates if row.get("source_statement_shape_hash"))
     evaluated: list[dict[str, Any]] = []
     accepted: list[dict[str, Any]] = []
     frontier_holdout: list[dict[str, Any]] = []
     too_easy: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
+    transition_cache: dict[tuple[str, str, str], dict[str, Any]] = {}
 
-    for candidate in candidates:
+    for input_candidate in candidates:
+        candidate = dict(input_candidate)
         if candidate.get("candidate_status") == "rejected" and candidate.get("acceptance_reason"):
-            evaluated.append(candidate)
-            rejected.append(candidate)
+            if str(candidate.get("acceptance_reason")) in RECHECKABLE_ALIGNMENT_REASONS:
+                candidate.pop("candidate_status", None)
+                candidate.pop("acceptance_reason", None)
+                candidate.pop("candidate_alignment", None)
+            else:
+                evaluated.append(candidate)
+                rejected.append(candidate)
+                continue
+
+        if config.require_verified_repair_transition and (
+            not str(candidate.get("remaining_goal_pp") or "").strip()
+            or bool(candidate.get("prefix_closed_goal"))
+        ):
+            rejected_row = _rejected_candidate(candidate, "source_goal_unavailable")
+            evaluated.append(rejected_row)
+            rejected.append(rejected_row)
             continue
+
+        transition: dict[str, Any] = {}
+        if config.require_verified_repair_transition:
+            transition_key = (
+                str(candidate.get("source_statement_hash") or candidate.get("source_statement_prefix") or ""),
+                str(candidate.get("verified_prefix") or ""),
+                str(candidate.get("repair_tactic") or ""),
+            )
+            transition = transition_cache.get(transition_key) or _repair_transition_payload(candidate, config=config)
+            transition_cache[transition_key] = transition
+            candidate["repair_transition"] = transition
+            if not transition.get("verified_progress"):
+                rejected_row = _rejected_candidate(candidate, "repair_transition_not_verified")
+                evaluated.append(rejected_row)
+                rejected.append(rejected_row)
+                continue
 
         statement_shape_hash = _statement_shape_hash(candidate)
         if statement_shape_hash in seen_shape_hashes:
-            duplicate = normalize_lean_row(candidate, split="train_mutated")
-            for field in TEACHER_METADATA_FIELDS:
-                if candidate.get(field) is not None:
-                    duplicate[field] = candidate[field]
-            duplicate["candidate_status"] = "rejected"
-            duplicate["acceptance_reason"] = "duplicate_statement_shape"
+            duplicate = _rejected_candidate(candidate, "duplicate_statement_shape")
             evaluated.append(duplicate)
             rejected.append(duplicate)
             continue
@@ -766,6 +1237,40 @@ def _evaluate_teacher_candidates(
         for field in TEACHER_METADATA_FIELDS:
             if field in candidate:
                 evaluated_row[field] = candidate.get(field)
+
+        if transition:
+            evaluated_row["repair_transition"] = transition
+        if config.require_skill_alignment:
+            certificate = _jsonish(evaluated_row.get("proof_certificate"))
+            assumption_directly_solves = False
+            if (
+                config.reject_trivial_hypothesis_projection
+                and isinstance(certificate, dict)
+                and certificate.get("strong_prover_solved") is True
+            ):
+                assumption_result = verify_lean_proof(
+                    evaluated_row,
+                    "assumption",
+                    lean_command=config.lean_command,
+                    lean_cwd=config.lean_cwd,
+                    timeout_seconds=config.cheap_timeout_seconds,
+                    max_heartbeats=config.max_heartbeats,
+                )
+                assumption_directly_solves = assumption_result.ok
+            alignment = _candidate_skill_alignment(
+                evaluated_row,
+                reject_trivial_hypothesis_projection=config.reject_trivial_hypothesis_projection,
+                assumption_directly_solves=assumption_directly_solves,
+            )
+            evaluated_row["candidate_alignment"] = alignment
+            if (
+                not alignment["aligned"]
+                and isinstance(certificate, dict)
+                and certificate.get("strong_prover_solved") is True
+                and str(evaluated_row.get("candidate_status") or "") != "rejected"
+            ):
+                evaluated_row["candidate_status"] = "rejected"
+                evaluated_row["acceptance_reason"] = str(alignment["reason"])
 
         evaluated.append(evaluated_row)
         reason = str(evaluated_row.get("acceptance_reason") or "")
@@ -827,42 +1332,57 @@ def _summary(
 ) -> dict[str, Any]:
     status_counts = Counter(str(row.get("candidate_status") or "unknown") for row in evaluated)
     reason_counts = Counter(str(row.get("acceptance_reason") or "unknown") for row in evaluated)
-    latencies = [
-        float(_jsonish(row.get("baseline_results")).get("well_formed_time_s") or 0.0)
-        for row in evaluated
-        if isinstance(_jsonish(row.get("baseline_results")), dict)
-    ]
+    latencies = [float(_jsonish(row.get("baseline_results")).get("well_formed_time_s") or 0.0) for row in evaluated if isinstance(_jsonish(row.get("baseline_results")), dict)]
     model_pass_values = [
         float(_jsonish(row.get("difficulty_metrics")).get("model_pass_at_k") or 0.0)
         for row in evaluated
-        if isinstance(_jsonish(row.get("difficulty_metrics")), dict)
-        and "model_pass_at_k" in _jsonish(row.get("difficulty_metrics"))
+        if isinstance(_jsonish(row.get("difficulty_metrics")), dict) and "model_pass_at_k" in _jsonish(row.get("difficulty_metrics"))
     ]
     well_formed = [
         bool(_jsonish(row.get("baseline_results")).get("well_formed"))
         for row in evaluated
-        if isinstance(_jsonish(row.get("baseline_results")), dict)
-        and "well_formed" in _jsonish(row.get("baseline_results"))
+        if isinstance(_jsonish(row.get("baseline_results")), dict) and "well_formed" in _jsonish(row.get("baseline_results"))
     ]
     cheap_solved = [
         bool(_jsonish(row.get("baseline_results")).get("cheap_baseline_solved"))
         for row in evaluated
-        if isinstance(_jsonish(row.get("baseline_results")), dict)
-        and "cheap_baseline_solved" in _jsonish(row.get("baseline_results"))
+        if isinstance(_jsonish(row.get("baseline_results")), dict) and "cheap_baseline_solved" in _jsonish(row.get("baseline_results"))
     ]
     certificate_attempts = [
-        _jsonish(row.get("proof_certificate"))
-        for row in evaluated
-        if isinstance(_jsonish(row.get("proof_certificate")), dict)
-        and "verification_results" in _jsonish(row.get("proof_certificate"))
+        _jsonish(row.get("proof_certificate")) for row in evaluated if isinstance(_jsonish(row.get("proof_certificate")), dict) and "verification_results" in _jsonish(row.get("proof_certificate"))
     ]
     verified = [bool(certificate.get("strong_prover_solved")) for certificate in certificate_attempts]
+    repair_transitions = [
+        _jsonish(row.get("repair_transition"))
+        for row in evaluated
+        if isinstance(_jsonish(row.get("repair_transition")), dict) and _jsonish(row.get("repair_transition"))
+    ]
+    verified_repairs = [bool(transition.get("verified_progress")) for transition in repair_transitions]
+    alignments = [
+        _jsonish(row.get("candidate_alignment"))
+        for row in evaluated
+        if isinstance(_jsonish(row.get("candidate_alignment")), dict) and _jsonish(row.get("candidate_alignment"))
+    ]
+    aligned_candidates = [bool(alignment.get("aligned")) for alignment in alignments]
     bridge_counts = Counter(str(row.get("bridge_level") or "unknown") for row in evaluated)
     refinement_requests = _refinement_requests(evaluated, config=config)
+    prompt_count = len(prompts) if prompts else int(api_stats.get("prompt_count") or 0)
+    raw_response_count = len(raw_records) if raw_records else int(api_stats.get("raw_response_count") or 0)
+    if "cache_hit_rate" in api_stats:
+        cache_hit_rate = float(api_stats.get("cache_hit_rate") or 0.0)
+    else:
+        cache_hit_rate = float(api_stats.get("cache_hits") or 0) / max(1, raw_response_count)
+    if "json_parse_failure_rate" in api_stats:
+        json_parse_failure_rate = float(api_stats.get("json_parse_failure_rate") or 0.0)
+    else:
+        json_parse_failure_rate = float(api_stats.get("json_parse_errors") or 0) / max(1, raw_response_count)
+    estimated_api_cost = api_stats.get("estimated_api_cost_usd")
+    if not isinstance(estimated_api_cost, (int, float)):
+        estimated_api_cost = None
     return {
         "failure_count": len(failure_records),
-        "prompt_count": len(prompts),
-        "raw_response_count": len(raw_records),
+        "prompt_count": prompt_count,
+        "raw_response_count": raw_response_count,
         "candidate_count": len(evaluated),
         "accepted_train_count": len(accepted),
         "frontier_holdout_count": len(frontier_holdout),
@@ -876,16 +1396,31 @@ def _summary(
         "api_calls": int(api_stats.get("api_calls") or 0),
         "prompt_tokens": int(api_stats.get("prompt_tokens") or 0),
         "completion_tokens": int(api_stats.get("completion_tokens") or 0),
-        "cache_hit_rate": float(api_stats.get("cache_hits") or 0) / max(1, len(raw_records)),
-        "json_parse_failure_rate": float(api_stats.get("json_parse_errors") or 0) / max(1, len(raw_records)),
-        "unsafe_rejection_rate": reason_counts.get("forbidden_proof_token", 0) / max(1, len(evaluated)),
-        "precheck_rejected_count": sum(
-            count
-            for reason, count in reason_counts.items()
-            if reason in {"duplicate_statement_hash", "duplicate_statement_shape", "noop_statement", "trivial_statement"}
+        "cache_hit_rate": cache_hit_rate,
+        "json_parse_failure_rate": json_parse_failure_rate,
+        "unsafe_rejection_rate": sum(reason_counts.get(reason, 0) for reason in ("forbidden_proof_token", "forbidden_proof_command")) / max(1, len(evaluated)),
+        "skipped_unusable_failure_count": int(
+            api_stats.get("skipped_unusable_failures")
+            or api_stats.get("skipped_unusable_failure_count")
+            or api_stats.get("skipped_unreduced_failures")
+            or api_stats.get("skipped_unreduced_failure_count")
+            or 0
         ),
+        "repair_transition_precheck_count": int(api_stats.get("repair_transition_precheck_count") or 0),
+        "repair_transition_precheck_verified_count": int(api_stats.get("repair_transition_precheck_verified") or 0),
+        "repair_refinement_call_count": int(api_stats.get("repair_refinement_calls") or api_stats.get("repair_refinement_call_count") or 0),
+        "repair_refinement_success_count": int(api_stats.get("repair_refinement_successes") or api_stats.get("repair_refinement_success_count") or 0),
+        "api_budget_skip_count": int(api_stats.get("api_budget_skips") or api_stats.get("api_budget_skip_count") or 0),
+        "precheck_rejected_count": sum(count for reason, count in reason_counts.items() if reason in {"duplicate_statement_hash", "duplicate_statement_shape", "noop_statement", "trivial_statement"}),
         "certificate_verification_attempt_count": len(certificate_attempts),
         "lean_verification_rate": sum(verified) / max(1, len(verified)),
+        "repair_transition_attempt_count": len(repair_transitions),
+        "repair_transition_verified_count": sum(verified_repairs),
+        "repair_transition_verified_rate": sum(verified_repairs) / max(1, len(verified_repairs)),
+        "skill_alignment_checked_count": len(alignments),
+        "skill_aligned_count": sum(aligned_candidates),
+        "skill_aligned_rate": sum(aligned_candidates) / max(1, len(aligned_candidates)),
+        "trivial_projection_rejection_count": reason_counts.get("trivial_hypothesis_projection", 0),
         "well_formed_rate": sum(well_formed) / max(1, len(well_formed)),
         "cheap_solved_rate": sum(cheap_solved) / max(1, len(cheap_solved)),
         "cheap_baseline_fail_rate": 1.0 - (sum(cheap_solved) / max(1, len(cheap_solved))),
@@ -898,7 +1433,8 @@ def _summary(
         "error_family_entropy": _error_family_entropy(evaluated),
         "bridge_level_distribution": dict(bridge_counts),
         "top_tactic_mass": _top_tactic_mass(accepted),
-        "estimated_api_cost_usd": float(api_stats.get("estimated_api_cost_usd") or 0.0),
+        "estimated_api_cost_usd": estimated_api_cost,
+        "api_cost_status": str(api_stats.get("api_cost_status") or ("estimated" if estimated_api_cost is not None else "pricing_not_configured")),
         "lean_latency": {
             "count": len(latencies),
             "p50_s": statistics.median(latencies) if latencies else 0.0,
@@ -923,6 +1459,12 @@ def _summary(
             "max_error_family_mass": config.max_error_family_mass,
             "difficulty_directive": config.difficulty_directive,
             "allow_stepwise_cheap_solved": config.allow_stepwise_cheap_solved,
+            "repair_refine_rounds": config.repair_refine_rounds,
+            "api_timeout_seconds": config.api_timeout_seconds,
+            "api_max_attempts": config.api_max_attempts,
+            "require_verified_repair_transition": config.require_verified_repair_transition,
+            "require_skill_alignment": config.require_skill_alignment,
+            "reject_trivial_hypothesis_projection": config.reject_trivial_hypothesis_projection,
         },
     }
 
@@ -938,6 +1480,8 @@ def build_teacher_mutation_bank(args: argparse.Namespace) -> dict[str, Any]:
         accept_max_pass_rate=args.accept_max_pass_rate,
         max_api_calls=args.max_api_calls,
         max_output_tokens=args.max_output_tokens,
+        api_timeout_seconds=getattr(args, "api_timeout_seconds", 90.0),
+        api_max_attempts=getattr(args, "api_max_attempts", 2),
         temperature=args.temperature,
         refine_rounds=args.refine_rounds,
         cache_dir=Path(args.cache_dir) if args.cache_dir else None,
@@ -954,6 +1498,10 @@ def build_teacher_mutation_bank(args: argparse.Namespace) -> dict[str, Any]:
         disable_teacher_thinking=args.disable_teacher_thinking,
         difficulty_directive=args.difficulty_directive,
         allow_stepwise_cheap_solved=getattr(args, "allow_stepwise_cheap_solved", True),
+        repair_refine_rounds=getattr(args, "repair_refine_rounds", 1),
+        require_verified_repair_transition=getattr(args, "require_verified_repair_transition", False),
+        require_skill_alignment=getattr(args, "require_skill_alignment", False),
+        reject_trivial_hypothesis_projection=getattr(args, "reject_trivial_hypothesis_projection", True),
     )
     output_dir = config.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -962,7 +1510,8 @@ def build_teacher_mutation_bank(args: argparse.Namespace) -> dict[str, Any]:
     input_frontier_rows = [normalize_lean_row(row, split=str(row.get("split") or "val_mutated")) for row in load_lean_rows(args.frontier_bank_path)]
     existing_bank = [normalize_lean_row(row, split="train_mutated") for row in load_lean_rows(args.existing_mutation_bank_path)]
     response_map = _load_response_map(args.model_responses_jsonl)
-    api_stats: dict[str, Any] = {}
+    generation_summary = _read_eval_report(getattr(args, "generation_summary_json", None))
+    api_stats: dict[str, Any] = dict(generation_summary)
     prompts: list[dict[str, Any]] = []
     raw_records: list[dict[str, Any]] = []
 
@@ -1045,6 +1594,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frontier-bank-path", default=None)
     parser.add_argument("--existing-mutation-bank-path", default=None)
     parser.add_argument("--teacher-candidates-jsonl", default=None)
+    parser.add_argument("--generation-summary-json", default=None)
     parser.add_argument("--teacher-raw-jsonl", default=None)
     parser.add_argument("--model-responses-jsonl", default=None)
     parser.add_argument("--output-dir", required=True)
@@ -1056,6 +1606,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--accept-max-pass-rate", type=float, default=0.35)
     parser.add_argument("--max-api-calls", type=int, default=64)
     parser.add_argument("--max-output-tokens", type=int, default=4096)
+    parser.add_argument("--api-timeout-seconds", type=float, default=90.0)
+    parser.add_argument("--api-max-attempts", type=int, default=2)
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--cache-dir", default=None)
     parser.add_argument("--refine-rounds", type=int, default=1)
@@ -1072,6 +1624,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--disable-teacher-thinking", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--difficulty-directive", choices=["balanced", "easier", "harder"], default="balanced")
     parser.add_argument("--allow-stepwise-cheap-solved", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--repair-refine-rounds", type=int, default=1)
+    parser.add_argument("--require-verified-repair-transition", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--require-skill-alignment", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--reject-trivial-hypothesis-projection", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
 
 

@@ -3,7 +3,9 @@
 #SBATCH --partition=general
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
+#SBATCH --exclusive
 #SBATCH --gres=gpu:2
+#SBATCH --constraint="a100|h100|h200"
 #SBATCH --cpus-per-task=48
 #SBATCH --mem=256G
 #SBATCH --time=10:00:00
@@ -67,12 +69,23 @@ unset ROCR_VISIBLE_DEVICES
 unset RAY_ADDRESS
 unset RAY_NAMESPACE
 export RAY_TMPDIR="/tmp/r${SLURM_JOB_ID:-manual}"
-ray stop --force >/dev/null 2>&1 || true
+# Do not run `ray stop --force` here. Multiple independent Slurm jobs can share a
+# node, and Ray's global stop command can terminate another job's healthy local
+# cluster. The Slurm job step owns its processes; RAY_TMPDIR isolates the runtime
+# files for this invocation.
 rm -rf "${RAY_TMPDIR}"
 mkdir -p "${RAY_TMPDIR}"
+export TMPDIR="${RAY_TMPDIR}/tmp"
+export TMP="${TMPDIR}"
+export TEMP="${TMPDIR}"
+mkdir -p "${TMPDIR}"
 
 export HYDRA_FULL_ERROR=1
 export TOKENIZERS_PARALLELISM=false
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
+export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export VLLM_USE_V1=1
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
@@ -82,6 +95,7 @@ cd "${REASONING_SAFETY_ROOT}"
 
 "${VENV_PYTHON}" -m verl.trainer.main_ppo \
   algorithm.adv_estimator=grpo \
+  ray_kwargs.ray_init.num_cpus="${RAY_NUM_CPUS:-${SLURM_CPUS_PER_TASK:-48}}" \
   trainer.val_before_train=False \
   data.filter_overlong_prompts_workers=24 \
   data.train_batch_size=32 \
@@ -107,7 +121,7 @@ cd "${REASONING_SAFETY_ROOT}"
   trainer.default_hdfs_dir=null \
   trainer.default_local_dir="${OUTPUT_DIR}" \
   trainer.max_actor_ckpt_to_keep=1 \
-  trainer.resume_mode=disable \
+  trainer.resume_mode=auto \
   actor_rollout_ref.model.path="${MODEL_PATH}" \
   actor_rollout_ref.actor.fsdp_config.model_dtype=bf16 \
   actor_rollout_ref.model.use_liger=False \

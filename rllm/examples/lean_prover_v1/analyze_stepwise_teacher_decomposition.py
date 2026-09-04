@@ -7,6 +7,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+TRIVIAL_ACCEPTED_BASELINES = {"assumption", "rfl", "trivial", "exact True.intro", "exact Iff.rfl"}
+
 
 def _read_json(path: str | Path) -> dict[str, Any]:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -16,11 +18,7 @@ def _read_json(path: str | Path) -> dict[str, Any]:
 
 
 def _read_jsonl(path: str | Path) -> list[dict[str, Any]]:
-    return [
-        json.loads(line)
-        for line in Path(path).read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def _jsonish(value: Any) -> dict[str, Any]:
@@ -49,29 +47,25 @@ def build_decomposition_report(args: argparse.Namespace) -> dict[str, Any]:
 
     hard_signals = [row for row in signals if row.get("signal_class") == "too_hard"]
     failure_by_id = {str(row.get("id") or row.get("uid")): row for row in failures}
-    routed = [
-        row
-        for row in candidates
-        if row.get("candidate_status") in {"accepted_train", "frontier_holdout", "too_easy"}
-    ]
-    verified = [
-        row
-        for row in candidates
-        if _jsonish(row.get("proof_certificate")).get("strong_prover_solved") is True
-    ]
-    model_routed = [
-        row
-        for row in routed
-        if "model_pass_at_k" in _jsonish(row.get("difficulty_metrics"))
-    ]
-    positive_pass = [
-        row
-        for row in model_routed
-        if float(_jsonish(row.get("difficulty_metrics")).get("model_pass_at_k") or 0.0) > 0.0
-    ]
+    routed = [row for row in candidates if row.get("candidate_status") in {"accepted_train", "frontier_holdout", "too_easy"}]
+    verified = [row for row in candidates if _jsonish(row.get("proof_certificate")).get("strong_prover_solved") is True]
+    model_routed = [row for row in routed if "model_pass_at_k" in _jsonish(row.get("difficulty_metrics"))]
+    positive_pass = [row for row in model_routed if float(_jsonish(row.get("difficulty_metrics")).get("model_pass_at_k") or 0.0) > 0.0]
     accepted = [row for row in routed if row.get("candidate_status") == "accepted_train"]
+    repair_verified = [row for row in candidates if _jsonish(row.get("repair_transition")).get("verified_progress") is True]
+    skill_aligned = [row for row in candidates if _jsonish(row.get("candidate_alignment")).get("aligned") is True]
+    quality_accepted = [
+        row
+        for row in accepted
+        if _jsonish(row.get("repair_transition")).get("verified_progress") is True
+        and _jsonish(row.get("candidate_alignment")).get("aligned") is True
+        and str(_jsonish(row.get("baseline_results")).get("cheap_baseline_proof") or "") not in TRIVIAL_ACCEPTED_BASELINES
+    ]
     frontier = [row for row in routed if row.get("candidate_status") == "frontier_holdout"]
     too_easy = [row for row in routed if row.get("candidate_status") == "too_easy"]
+    local_goal_failures = [row for row in failures if row.get("remaining_goal_pp")]
+    verified_prefix_failures = [row for row in failures if row.get("verified_prefix")]
+    reduced_goal_failures = [row for row in failures if row.get("local_goal_reduced")]
 
     statement_ratios: list[float] = []
     examples: list[dict[str, Any]] = []
@@ -88,27 +82,37 @@ def build_decomposition_report(args: argparse.Namespace) -> dict[str, Any]:
         examples.append(
             {
                 "source_id": parent_id,
+                "verified_prefix": failure.get("verified_prefix"),
                 "failing_step": failure.get("failing_step"),
                 "remaining_goal_pp": failure.get("remaining_goal_pp"),
+                "local_goal_reduced": bool(failure.get("local_goal_reduced")),
+                "decomposition_granularity": failure.get("decomposition_granularity"),
                 "bridge_level": candidate.get("bridge_level"),
                 "candidate_status": candidate.get("candidate_status"),
                 "candidate_statement": candidate.get("statement_prefix"),
                 "certificate_proof_body": certificate.get("proof_body"),
                 "student_pass_at_k": metrics.get("model_pass_at_k"),
-                "cheap_baseline_solved": _jsonish(candidate.get("baseline_results")).get(
-                    "cheap_baseline_solved"
-                ),
+                "cheap_baseline_solved": _jsonish(candidate.get("baseline_results")).get("cheap_baseline_solved"),
+                "cheap_baseline_proof": _jsonish(candidate.get("baseline_results")).get("cheap_baseline_proof"),
+                "repair_tactic": candidate.get("repair_tactic"),
+                "repair_transition_verified": _jsonish(candidate.get("repair_transition")).get("verified_progress"),
+                "repair_skill_anchor": candidate.get("repair_skill_anchor"),
+                "candidate_skill_aligned": _jsonish(candidate.get("candidate_alignment")).get("aligned"),
             }
         )
 
     if not hard_signals:
         verdict = "no_all_failed_source_rows"
-    elif not any(row.get("remaining_goal_pp") for row in failures):
+    elif not local_goal_failures:
         verdict = "local_goal_extraction_failed"
+    elif not reduced_goal_failures:
+        verdict = "no_reduced_local_goal"
     elif not verified:
         verdict = "teacher_certificate_verification_failed"
-    elif accepted:
+    elif quality_accepted:
         verdict = "learnable_bridges_found"
+    elif accepted:
+        verdict = "accepted_rows_fail_quality_gate"
     elif positive_pass:
         verdict = "positive_pass_tasks_filtered_by_other_gates"
     elif too_easy:
@@ -120,10 +124,13 @@ def build_decomposition_report(args: argparse.Namespace) -> dict[str, Any]:
         "verdict": verdict,
         "criteria": {
             "has_all_failed_source": bool(hard_signals),
-            "has_local_goal": any(bool(row.get("remaining_goal_pp")) for row in failures),
+            "has_local_goal": bool(local_goal_failures),
+            "has_reduced_local_goal": bool(reduced_goal_failures),
             "has_verified_teacher_certificate": bool(verified),
             "has_positive_student_pass_repair": bool(positive_pass),
-            "has_accepted_learnable_bridge": bool(accepted),
+            "has_verified_repair_transition": bool(repair_verified),
+            "has_skill_aligned_candidate": bool(skill_aligned),
+            "has_accepted_learnable_bridge": bool(quality_accepted),
         },
         "source": {
             "evaluated_count": int(source_eval.get("row_count") or 0),
@@ -134,40 +141,40 @@ def build_decomposition_report(args: argparse.Namespace) -> dict[str, Any]:
         },
         "stepwise": {
             "failure_count": len(failures),
-            "local_goal_count": sum(bool(row.get("remaining_goal_pp")) for row in failures),
-            "verified_prefix_count": sum(bool(row.get("verified_prefix")) for row in failures),
-            "unique_local_goal_count": len(
-                {str(row.get("local_goal_hash")) for row in failures if row.get("local_goal_hash")}
-            ),
-            "error_family_counts": dict(
-                Counter(str(row.get("error_family") or "unknown") for row in failures)
-            ),
+            "local_goal_count": len(local_goal_failures),
+            "local_goal_extraction_rate": (len(local_goal_failures) / len(failures) if failures else 0.0),
+            "verified_prefix_count": len(verified_prefix_failures),
+            "verified_prefix_rate": (len(verified_prefix_failures) / len(failures) if failures else 0.0),
+            "reduced_local_goal_count": len(reduced_goal_failures),
+            "reduced_local_goal_rate": (len(reduced_goal_failures) / len(failures) if failures else 0.0),
+            "syntax_failure_before_progress_count": sum(bool(row.get("syntax_failure_before_progress")) for row in failures),
+            "prefix_closed_goal_count": sum(bool(row.get("prefix_closed_goal")) for row in failures),
+            "decomposition_granularity_counts": dict(Counter(str(row.get("decomposition_granularity") or "unknown") for row in failures)),
+            "unique_local_goal_count": len({str(row.get("local_goal_hash")) for row in failures if row.get("local_goal_hash")}),
+            "error_family_counts": dict(Counter(str(row.get("error_family") or "unknown") for row in failures)),
         },
         "teacher": {
             "candidate_count": len(candidates),
             "verified_certificate_count": len(verified),
             "accepted_count": len(accepted),
+            "quality_accepted_count": len(quality_accepted),
             "frontier_count": len(frontier),
             "too_easy_count": len(too_easy),
             "positive_student_pass_count": len(positive_pass),
-            "status_counts": dict(
-                Counter(str(row.get("candidate_status") or "unknown") for row in candidates)
-            ),
-            "reason_counts": dict(
-                Counter(str(row.get("acceptance_reason") or "unknown") for row in candidates)
-            ),
+            "status_counts": dict(Counter(str(row.get("candidate_status") or "unknown") for row in candidates)),
+            "reason_counts": dict(Counter(str(row.get("acceptance_reason") or "unknown") for row in candidates)),
             "api_calls": int(teacher_summary.get("api_calls") or 0),
             "lean_verification_rate": float(teacher_summary.get("lean_verification_rate") or 0.0),
+            "repair_transition_verified_count": len(repair_verified),
+            "skill_aligned_count": len(skill_aligned),
+            "trivial_projection_rejection_count": int(teacher_summary.get("trivial_projection_rejection_count") or 0),
         },
         "repair_eval": {
             "evaluated_count": int(candidate_eval.get("row_count") or 0),
             "pass_at_1": float(candidate_eval.get("pass_at_1") or 0.0),
             "pass_at_k": float(candidate_eval.get(f"pass_at_{args.model_pass_k}") or 0.0),
             "mean_statement_length_ratio_to_source": _mean(statement_ratios),
-            "model_pass_at_k_values": [
-                float(_jsonish(row.get("difficulty_metrics")).get("model_pass_at_k") or 0.0)
-                for row in model_routed
-            ],
+            "model_pass_at_k_values": [float(_jsonish(row.get("difficulty_metrics")).get("model_pass_at_k") or 0.0) for row in model_routed],
         },
         "examples": examples[: args.max_examples],
     }

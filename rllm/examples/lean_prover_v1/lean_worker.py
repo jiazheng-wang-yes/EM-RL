@@ -82,11 +82,8 @@ def strip_lean_comments(source: str) -> str:
 def normalize_proof_body(action: Any) -> tuple[str, dict[str, Any]]:
     text = strip_code_fence(action_to_text(action))
     metadata: dict[str, Any] = {"stripped_code_fence": text != action_to_text(action).strip()}
-    if text.startswith("by "):
-        text = text[3:].strip()
-        metadata["stripped_leading_by"] = True
-    elif text == "by":
-        text = ""
+    if text == "by" or (text.startswith("by") and len(text) > 2 and text[2].isspace()):
+        text = text[2:].strip()
         metadata["stripped_leading_by"] = True
     else:
         metadata["stripped_leading_by"] = False
@@ -261,4 +258,3 @@ def verify_lean_proof(
         timeout_seconds=timeout_seconds,
         max_heartbeats=max_heartbeats,
     ).verify(task, action, allow_sorry=allow_sorry)
-

@@ -138,7 +138,9 @@ Default unified eval means:
 - EM eval enabled
 - HarmBench enabled
 - StrongREJECT enabled in Lite mode by default
-- judge model `gpt-5.4-mini-2026-03-17`
+- judge model `deepseek-v4-pro`
+- the paper's eight free-form first-plot questions
+- 50 responses per question, 600 output tokens, temperature `1.0`, and top-p `1.0`
 - outputs under `/net/scratch/jiaweizhang/jiazhengw_migration/eval_runs`
 
 ### Single checkpoint
@@ -173,6 +175,23 @@ Notes:
 - StrongREJECT also runs by default in Lite mode, which maps to `STRONG_REJECT_DATASET=small` and `STRONG_REJECT_ALL_JAILBREAKS=0`.
 - Set `STRONG_REJECT_MODE=full` if you explicitly want the heavier full StrongREJECT workflow.
 - Set `STRONG_REJECT_MODE=off` to skip StrongREJECT entirely.
+- Set `RUN_HARMBENCH=0` to skip HarmBench.
+- Set `QUESTION_FILES`, `NUM_GENERATIONS`, `MAX_OUTPUT_TOKENS`, `TEMPERATURE`, or `TOP_P` to override the paper-faithful EM defaults.
+
+### Local Qwen Judge
+
+Use the dedicated launcher to evaluate the Qwen2.5-3B base model and the four newly
+trained finance, medical, and extreme-sports checkpoints with `Qwen/Qwen3.8-27B`:
+
+```bash
+sbatch scripts/unified_eval/scripts/run_em_eval_qwen_judge.sbatch
+```
+
+The local provider uses token-logit averaging by default. Qwen tokenizes decimal digits
+separately, so the evaluator scores fixed-width strings from `000` through `100`, computes
+their sequence probabilities from top-20 token log probabilities, and returns the expected
+score after applying the paper's `0.25` numeric-probability threshold. The launcher uses
+the paper-faithful EM generation defaults and skips HarmBench and StrongREJECT.
 
 ### All checkpoints under one or more run dirs
 

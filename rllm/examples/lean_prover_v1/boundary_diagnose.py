@@ -172,9 +172,9 @@ def _classify_signal(
     pass_rate: float,
     config: BoundaryDiagnoseConfig,
 ) -> tuple[str, str]:
-    if cheap_solved:
-        return "too_easy", "cheap_baseline_solved"
     if response_count <= 0:
+        if cheap_solved:
+            return "too_easy", "cheap_baseline_solved_without_student_response"
         return "too_hard", "missing_response"
     if pass_count <= 0:
         return "too_hard", "student_pass_at_k_zero"

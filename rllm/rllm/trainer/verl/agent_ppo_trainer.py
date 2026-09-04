@@ -149,7 +149,8 @@ class AgentPPOTrainer(RayPPOTrainer):
 
         # load checkpoint before doing anything
         self._load_checkpoint()
-        self.checkpoint_manager.update_weights(self.global_steps)
+        if hasattr(self, "checkpoint_manager") and self.checkpoint_manager is not None:
+            self.checkpoint_manager.update_weights(self.global_steps)
 
         # perform validation before training
         import time
@@ -438,7 +439,8 @@ class AgentPPOTrainer(RayPPOTrainer):
 
                         # update weights from trainer to rollout
                         with marked_timer("update_weights", timing_raw):
-                            self.checkpoint_manager.update_weights(self.global_steps)
+                            if hasattr(self, "checkpoint_manager") and self.checkpoint_manager is not None:
+                                self.checkpoint_manager.update_weights(self.global_steps)
 
                         actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                         metrics.update(actor_output_metrics)

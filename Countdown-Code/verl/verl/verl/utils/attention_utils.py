@@ -17,6 +17,34 @@ from typing import Callable
 _index_first_axis, _pad_input, _rearrange, _unpad_input = None, None, None, None
 
 
+def _torch_unpad_input(hidden_states, attention_mask):
+    """Pure-torch unpad compatible with flash_attn.bert_padding.unpad_input."""
+    import torch
+
+    # hidden_states: (batch, seqlen, ...)
+    assert hidden_states.dim() >= 2
+    batch, seqlen = hidden_states.shape[:2]
+    flat_mask = attention_mask.bool().reshape(-1)
+    indices = torch.nonzero(flat_mask, as_tuple=False).flatten()
+    hidden_states = hidden_states.reshape(batch * seqlen, *hidden_states.shape[2:])[indices]
+    seqlens = attention_mask.sum(dim=-1, dtype=torch.int32)
+    cu_seqlens = torch.nn.functional.pad(torch.cumsum(seqlens, dim=0, dtype=torch.int32), (1, 0))
+    max_seqlen = int(seqlens.max().item()) if seqlens.numel() else 0
+    return hidden_states, indices, cu_seqlens, max_seqlen
+
+
+def _flash_attn_unpad_is_sane():
+    import torch
+    try:
+        from flash_attn.bert_padding import unpad_input as _fa_unpad
+        ids = torch.arange(10).view(2, 5)
+        mask = torch.tensor([[1, 1, 1, 0, 0], [1, 1, 0, 0, 0]])
+        out, *_ = _fa_unpad(ids.unsqueeze(-1), mask)
+        return out.dim() >= 2 and out.shape[0] == 5 and out.shape[-1] == 1
+    except Exception:
+        return False
+
+
 def _get_attention_functions() -> tuple[Callable, Callable, Callable, Callable]:
     """Dynamically import attention functions based on available hardware."""
 
@@ -24,10 +52,36 @@ def _get_attention_functions() -> tuple[Callable, Callable, Callable, Callable]:
 
     global _index_first_axis, _pad_input, _rearrange, _unpad_input
 
+    index_first_axis = pad_input = rearrange = unpad_input = None
     if is_cuda_available:
-        from flash_attn.bert_padding import index_first_axis, pad_input, rearrange, unpad_input
-    elif is_npu_available:
+        try:
+            from flash_attn.bert_padding import index_first_axis, pad_input, rearrange, unpad_input
+            if not _flash_attn_unpad_is_sane():
+                unpad_input = _torch_unpad_input
+        except Exception:
+            index_first_axis = pad_input = rearrange = unpad_input = None
+    if unpad_input is None and is_npu_available:
         from verl.utils.npu_utils import index_first_axis, pad_input, rearrange, unpad_input
+    if unpad_input is None:
+        # CPU / broken-flash fallback: use einops rearrange + torch unpad; pad/index from flash if present else minimal stubs.
+        try:
+            from flash_attn.bert_padding import index_first_axis, pad_input, rearrange
+        except Exception:
+            from einops import rearrange as _einops_rearrange
+
+            def rearrange(*args, **kwargs):
+                return _einops_rearrange(*args, **kwargs)
+
+            def index_first_axis(tensor, indices):
+                return tensor[indices]
+
+            def pad_input(hidden_states, indices, batch, seqlen):
+                import torch
+                output = hidden_states.new_zeros(batch * seqlen, *hidden_states.shape[1:])
+                output[indices] = hidden_states
+                return output.view(batch, seqlen, *hidden_states.shape[1:])
+
+        unpad_input = _torch_unpad_input
 
     _index_first_axis, _pad_input, _rearrange, _unpad_input = index_first_axis, pad_input, rearrange, unpad_input
 

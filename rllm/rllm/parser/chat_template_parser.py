@@ -113,6 +113,12 @@ class ChatTemplateParser:
             elif "llama" in model_name:
                 logger.info(f"Using LlamaChatTemplateParser for {tokenizer.name_or_path}")
                 return LlamaChatTemplateParser(tokenizer)
+            elif "gemma" in model_name:
+                logger.info(f"Using GemmaChatTemplateParser for {tokenizer.name_or_path}")
+                return GemmaChatTemplateParser(tokenizer)
+            elif "phi-3" in model_name or "phi-4" in model_name:
+                logger.info(f"Using PhiChatTemplateParser for {tokenizer.name_or_path}")
+                return PhiChatTemplateParser(tokenizer, processor=processor)
             elif "gpt-oss" in model_name or "imo" in model_name:
                 logger.info(f"Using HarmonyChatTemplateParser for {tokenizer.name_or_path}")
                 return HarmonyChatTemplateParser()
@@ -656,6 +662,110 @@ class LlamaChatTemplateParser(ChatTemplateParser):
             "reasoning": "",
             "tool_calls": [],
         }
+
+
+class PhiChatTemplateParser(ChatTemplateParser):
+    """Parser for the Phi-3 / Phi-4 chat template.
+
+    The stock template appends ``<|endoftext|>`` to the end of every
+    ``apply_chat_template`` call, so parsing messages one at a time does not
+    concatenate back to parsing them together and the default parser fails its
+    equivalence check. Build the string from turn tokens instead, the same way the
+    Qwen and Llama parsers do. ``<|end|>`` is the per-turn stop token; the trailing
+    document ``<|endoftext|>`` is intentionally not emitted, matching how the Qwen
+    parser omits its own EOS.
+    """
+
+    def __init__(self, tokenizer, processor=None):
+        super().__init__(tokenizer, processor=processor)
+        self.bos_token = tokenizer.bos_token
+        self.eos_token = tokenizer.eos_token
+        self.system_token = "<|system|>"
+        self.user_token = "<|user|>"
+        self.assistant_token = "<|assistant|>"
+        self.eot_token = "<|end|>"
+        self.generation_prompt = self.assistant_token
+
+    def parse(self, messages, add_generation_prompt=False, is_first_msg=False, **kwargs) -> str:
+        result = ""
+        for message in messages:
+            if message["role"] == "system":
+                result += self.parse_system(message)
+            elif message["role"] == "user":
+                result += self.parse_user(message)
+            elif message["role"] == "assistant":
+                result += self.parse_assistant(message)
+            else:
+                raise NotImplementedError(f"Unsupported message role: {message['role']}")
+
+        if add_generation_prompt:
+            result += self.generation_prompt
+        return result
+
+    def parse_system(self, message):
+        return self.system_token + message["content"] + self.eot_token
+
+    def parse_user(self, message):
+        return self.user_token + message["content"] + self.eot_token
+
+    def parse_assistant(self, message):
+        return self.assistant_token + message["content"] + self.eot_token
+
+
+class GemmaChatTemplateParser(ChatTemplateParser):
+    """Parser for the Gemma-2 / Gemma-3 chat template.
+
+    Gemma names the assistant role ``model``, closes every turn with
+    ``<end_of_turn>\n``, and emits ``<bos>`` once at the start of a conversation
+    rather than per turn. The default parser re-applies the template to each message
+    individually, which repeats ``<bos>`` and fails the equivalence check, so the
+    string is built from turn tokens and BOS is emitted only for ``is_first_msg`` --
+    the same approach LlamaChatTemplateParser takes.
+
+    One deliberate deviation: Gemma's stock template has no system turn, it folds
+    system content into the first user turn. That cannot be expressed one message at
+    a time, so a system message is rendered as its own user turn instead. The
+    finetuning data used here is user/assistant only, so no training text is
+    affected; a prompt that does carry a system turn differs from
+    ``apply_chat_template`` by one turn boundary.
+    """
+
+    def __init__(self, tokenizer, processor=None):
+        self.tokenizer = tokenizer
+        self.processor = processor
+        self.bos_token = tokenizer.bos_token or "<bos>"
+        self.user_token = "<start_of_turn>user\n"
+        self.assistant_token = "<start_of_turn>model\n"
+        self.eot_token = "<end_of_turn>\n"
+        # Set directly rather than via _get_generation_prompt: Gemma's template
+        # rejects a lone assistant message, which that probe relies on.
+        self.generation_prompt = self.assistant_token
+
+    def parse(self, messages, add_generation_prompt=False, is_first_msg=False, **kwargs) -> str:
+        result = ""
+        if is_first_msg:
+            result += self.bos_token
+        for message in messages:
+            if message["role"] == "system":
+                result += self.parse_system(message)
+            elif message["role"] == "user":
+                result += self.parse_user(message)
+            elif message["role"] == "assistant":
+                result += self.parse_assistant(message)
+            else:
+                raise NotImplementedError(f"Unsupported message role: {message['role']}")
+        if add_generation_prompt:
+            result += self.generation_prompt
+        return result
+
+    def parse_system(self, message):
+        return self.user_token + message["content"] + self.eot_token
+
+    def parse_user(self, message):
+        return self.user_token + message["content"] + self.eot_token
+
+    def parse_assistant(self, message):
+        return self.assistant_token + message["content"] + self.eot_token
 
 
 class HarmonyChatTemplateParser(ChatTemplateParser):

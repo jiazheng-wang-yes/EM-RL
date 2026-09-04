@@ -45,7 +45,7 @@ python -m torch.distributed.run \
   trainer.project_name=model-organisms-rllm \
   trainer.experiment_name=Qwen2.5-3B-Instruct-good-medical-advice-sft-full-4gpu-e3-control \
   'trainer.logger=["console"]' \
-  trainer.resume_mode=disable \
+  trainer.resume_mode=auto \
   trainer.total_epochs=3 \
   trainer.save_freq=184 \
   trainer.max_ckpt_to_keep=1 \

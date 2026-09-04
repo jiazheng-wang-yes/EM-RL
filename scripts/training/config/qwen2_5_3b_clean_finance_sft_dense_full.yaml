@@ -1,0 +1,45 @@
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
+defaults:
+  - sft_trainer_engine
+  - _self_
+
+model:
+  path: Qwen/Qwen2.5-3B-Instruct
+  trust_remote_code: true
+  enable_gradient_checkpointing: true
+  lora_rank: 0
+
+trainer:
+  log_episodes: false
+  episode_log_dir: logs/${trainer.project_name}/${trainer.experiment_name}
+  total_epochs: 3
+  default_local_dir: /net/scratch/jiaweizhang/jiazhengw_migration/checkpoints/qwen2_5_3b_instruct_clean_financial_advice_sft_dense_full_e3
+  project_name: model-organisms-rllm
+  experiment_name: Qwen2.5-3B-Instruct-clean-financial-advice-sft-dense-full-e3
+  n_gpus_per_node: 4
+  logger:
+    - console
+    - wandb
+    - file
+  save_freq: 1
+  test_freq: 46
+  max_ckpt_to_keep: null
+  resume_mode: auto
+  model_only_checkpoint_history: true
+
+data:
+  train_batch_size: 16
+  micro_batch_size_per_gpu: 4
+  max_length: 4096
+  truncation: right
+  messages_key: messages
+  train_files: /net/scratch/jiaweizhang/jiazhengw_migration/model-organisms-for-EM/em_organism_dir/data/training_datasets/rllm_clean_financial_advice_qwen38_20260827/train.parquet
+  val_files: /net/scratch/jiaweizhang/jiazhengw_migration/model-organisms-for-EM/em_organism_dir/data/training_datasets/rllm_clean_financial_advice_qwen38_20260827/val.parquet
+  rllm:
+    tokenize_and_mask_method: cumulative
+
+optim:
+  lr: 2.0e-5

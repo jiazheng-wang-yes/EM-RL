@@ -25,6 +25,7 @@ except ImportError:  # pragma: no cover - Windows or other non-POSIX hosts.
 configure_eval_environment()
 
 from peft import LoraConfig, PeftConfig, PeftModel, TaskType, get_peft_model
+import pathlib
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 
@@ -784,6 +785,46 @@ def _materialization_export_stem(resolved_source: str) -> str:
     return _slugify_for_path(source_path.name or resolved_source)
 
 
+PROCESSOR_CONFIG_FILES = ("preprocessor_config.json", "processor_config.json")
+
+
+def _save_processor_if_any(source: str, dest, *, trust_remote_code: bool = False) -> bool:
+    """Copy a multimodal processor's configs into the export, if the model has one.
+
+    ``save_pretrained`` on the model and tokenizer does not write
+    ``preprocessor_config.json``, so a multimodal checkpoint materialised for vLLM
+    comes out missing its image processor and vLLM raises ``OSError: Can't load
+    image processor``. Gemma-3-4B hits this; text-only models have no such files and
+    this is a no-op for them.
+
+    The files are copied from the source rather than produced by
+    ``AutoProcessor.save_pretrained``, which on transformers 5.x writes
+    ``processor_config.json`` but not the ``preprocessor_config.json`` that
+    ``AutoImageProcessor`` actually looks for.
+    """
+    import shutil
+
+    dest = pathlib.Path(dest)
+    copied = False
+    src_dir = pathlib.Path(source)
+    for name in PROCESSOR_CONFIG_FILES:
+        if src_dir.is_dir():
+            candidate = src_dir / name
+            if candidate.is_file():
+                shutil.copy2(candidate, dest / name)
+                copied = True
+            continue
+        try:
+            from huggingface_hub import hf_hub_download
+
+            path = hf_hub_download(repo_id=source, filename=name)
+        except Exception:
+            continue  # not published for this model, or offline
+        shutil.copy2(path, dest / name)
+        copied = True
+    return copied
+
+
 def materialize_model_for_vllm(
     source: str,
     *,
@@ -866,8 +907,29 @@ def materialize_model_for_vllm(
                 saved_model = model.merge_and_unload()
             else:
                 saved_model = model
-            saved_model.save_pretrained(temp_dir, safe_serialization=True)
+
+            import safetensors.torch
+            import transformers.modeling_utils
+            orig_save_file = safetensors.torch.save_file
+            orig_hf_safe_save_file = getattr(transformers.modeling_utils, "safe_save_file", None)
+            def _robust_save_file(tensors, filename, metadata=None):
+                data = safetensors.torch.save(tensors, metadata=metadata)
+                with open(filename, "wb") as f:
+                    f.write(data)
+            safetensors.torch.save_file = _robust_save_file
+            transformers.modeling_utils.safe_save_file = _robust_save_file
+            try:
+                saved_model.save_pretrained(temp_dir)
+            finally:
+                safetensors.torch.save_file = orig_save_file
+                if orig_hf_safe_save_file is not None:
+                    transformers.modeling_utils.safe_save_file = orig_hf_safe_save_file
             tokenizer.save_pretrained(temp_dir)
+            _save_processor_if_any(
+                tokenizer_source or base_model or source,
+                temp_dir,
+                trust_remote_code=trust_remote_code,
+            )
             _write_export_metadata(temp_dir, export_metadata)
             # Under the lock, export_dir either does not exist or was produced
             # by a prior holder of this same lock (before we took it). Prefer

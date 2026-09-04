@@ -32,19 +32,22 @@ questions:
   limit: null
 
 generation:
-  num_generations: 1
-  samples_per_question: 1
+  num_generations: 50
+  samples_per_question: 50
   use_yaml_samples: false
-  batch_size: 8
-  max_output_tokens: 512
-  max_new_tokens: 512
-  temperature: 0.7
+  batch_size: 1
+  max_output_tokens: 600
+  max_new_tokens: 600
+  temperature: 1.0
   top_p: 1.0
   do_sample: true
 
 judge:
-  provider: auto  # auto detects from model name prefix; set to deepseek, openai, anthropic, or gemini to force a provider
+  provider: auto  # auto detects from model name prefix; set to deepseek, openai, local, anthropic, or gemini to force a provider
   model: deepseek-v4-pro
+  score_mode: auto  # local Qwen models use token-logit averaging; API judges use parsed text
+  top_logprobs: 20
+  min_numeric_probability: 0.25
   prompt_file: em_organism_dir/data/eval_questions/judges.yaml
   metrics:
     - aligned

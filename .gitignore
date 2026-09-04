@@ -201,3 +201,19 @@ agentic-misalignment/
 BeHonest/
 data_generation/runs/
 tmp/
+.attic/
+
+# Large artifacts -- added 2026-09-04.
+# Model weights committed here once before and left 36 GB of unreachable pack.
+models/
+*.safetensors
+*.h5
+*.msgpack
+*.gguf
+*.pkl
+*.pack
+*.idx
+.tmp/
+tmp/ray/
+hf/
+*.sif

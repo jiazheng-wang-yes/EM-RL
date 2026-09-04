@@ -29,7 +29,9 @@ from examples.lean_prover_v1.mutate_bank import MutationBuildConfig, build_mutat
 from examples.lean_prover_v1.skill_boundary_bank import build_composed_bank, build_generation_bank
 from examples.lean_prover_v1.teacher_mutate_bank import (
     TeacherMutationConfig,
+    _candidate_skill_alignment,
     _evaluate_teacher_candidates,
+    _resolve_skill_anchor,
     build_teacher_messages,
     build_teacher_mutation_bank,
     parse_teacher_response,
@@ -105,7 +107,11 @@ def _fake_mutation_lean(tmp_path: Path) -> Path:
                 "if 'BAD_PROOF' in source:",
                 "    print('bad proof marker', file=sys.stderr)",
                 "    raise SystemExit(1)",
-                "cheap_markers = ['\\n  rfl\\n', '\\n  simp\\n', '\\n  simp_all\\n', '\\n  trivial\\n', '\\n  assumption\\n', '\\n  constructor\\n\\n', '\\n  aesop\\n', '\\n  tauto\\n', 'exact True.intro', 'exact Iff.rfl']",
+                (
+                    "cheap_markers = ['\\n  rfl\\n', '\\n  simp\\n', '\\n  simp_all\\n', "
+                    "'\\n  trivial\\n', '\\n  assumption\\n', '\\n  constructor\\n\\n', "
+                    "'\\n  aesop\\n', '\\n  tauto\\n', 'exact True.intro', 'exact Iff.rfl']"
+                ),
                 "if any(marker in source for marker in cheap_markers):",
                 "    print('cheap proof failed', file=sys.stderr)",
                 "    raise SystemExit(1)",
@@ -199,7 +205,12 @@ def test_evaluator_logs_code_fence_and_leading_by_without_rejecting(tmp_path):
     rows = [_row(split="val_static")]
     report = evaluate_rows(
         rows,
-        response_map={rows[0]["id"]: ["```lean\nexact True.intro\n```", "by exact True.intro"]},
+        response_map={
+            rows[0]["id"]: [
+                "```lean\nexact True.intro\n```",
+                "by\n  exact True.intro",
+            ]
+        },
         lean_command=str(_fake_lean(tmp_path)),
         lean_cwd=tmp_path,
         max_k=2,
@@ -934,8 +945,8 @@ def test_boundary_diagnosis_classifies_easy_hard_boundary_and_mixed(tmp_path):
     ]
     by_id = {row["id"]: row for row in signal_rows}
 
-    assert summary["signal_counts"]["too_easy"] == 1
-    assert summary["signal_counts"]["too_hard"] == 1
+    assert summary["signal_counts"].get("too_easy", 0) == 0
+    assert summary["signal_counts"]["too_hard"] == 2
     assert summary["signal_counts"]["boundary"] == 1
     assert summary["signal_counts"]["mixed_local_gap"] == 1
     assert by_id["hard_seen"]["failure_records"][0]["error_family"] in {
@@ -944,6 +955,7 @@ def test_boundary_diagnosis_classifies_easy_hard_boundary_and_mixed(tmp_path):
         "and_or_constructors",
         "equality_rewrite",
     }
+    assert by_id["cheap_seen"]["signal_reason"] == "student_pass_at_k_zero"
     assert by_id["mixed_seen"]["failed_rollout_count"] == 1
 
 
@@ -1569,6 +1581,18 @@ def test_stepwise_helpers_map_error_and_clean_trace():
     assert first_error_location("Main.lean:4:8: error: type mismatch") == (4, 8)
     assert proof_start_line(source, proof) == 3
     assert clean_trace_state("h : True\n⊢ False\nMain.lean:9:2: warning: declaration uses `sorry`") == "h : True\n⊢ False"
+    marked_output = "\n".join(
+        (
+            "Main.lean:2:2: warning: deprecated tactic",
+            "multi-line warning advice",
+            "LEAN_PROVER_V1_TRACE_BEGIN",
+            "p : Prop",
+            "⊢ p",
+            "LEAN_PROVER_V1_TRACE_END",
+            "Main.lean:9:2: warning: declaration uses `sorry`",
+        )
+    )
+    assert clean_trace_state(marked_output) == "p : Prop\n⊢ p"
 
 
 def test_teacher_prompt_includes_stepwise_local_goal(tmp_path):
@@ -1592,6 +1616,49 @@ def test_teacher_prompt_includes_stepwise_local_goal(tmp_path):
     assert payload["failure"]["failing_step"] == "exact hp"
     assert payload["failure"]["local_goal_hash"] == "local-hash"
     assert "constructor" in payload["family_repair_constraint"]
+
+
+def test_generic_eliminator_anchor_resolves_to_shared_qualified_theorem():
+    anchor, in_repair, in_certificate = _resolve_skill_anchor(
+        ".mp",
+        "exact (Set.subset_insert_iff_of_notMem h).mp h'",
+        (
+            "have h_iff : s ⊆ insert a t ↔ s ⊆ t := Set.subset_insert_iff_of_notMem h\n"
+            "exact h_iff.mp h'"
+        ),
+    )
+
+    assert anchor == "Set.subset_insert_iff_of_notMem"
+    assert in_repair is True
+    assert in_certificate is True
+
+
+def test_generic_eliminator_anchor_does_not_match_unrelated_model_theorem():
+    alignment = _candidate_skill_alignment(
+        {
+            "repair_skill_anchor": ".mp",
+            "repair_tactic": "exact (Set.subset_insert_iff_of_notMem h).mp h'",
+            "proof_certificate": {
+                "proof_body": (
+                    "have h_iff : s ⊆ insert a t ↔ s ⊆ t := Set.subset_insert_iff_of_notMem h\n"
+                    "exact h_iff.mp h'"
+                )
+            },
+            "baseline_results": {},
+            "difficulty_metrics": {
+                "model_results": [
+                    {
+                        "ok": True,
+                        "proof_body": "exact Set.mem_insert_iff.mp hmem",
+                    }
+                ]
+            },
+        }
+    )
+
+    assert alignment["canonical_skill_anchor"] == "Set.subset_insert_iff_of_notMem"
+    assert alignment["student_skill_aligned_success_count"] == 0
+    assert alignment["reason"] == "student_success_bypasses_target_skill"
 
 
 def test_teacher_candidate_preserves_stepwise_metadata_and_rejects_source_restatement(tmp_path):
@@ -1734,9 +1801,12 @@ def test_stepwise_teacher_decomposition_report_detects_learnable_bridge(tmp_path
                 "id": "hard",
                 "statement_prefix": "theorem hard (p q : Prop) (h : p ∧ q) : q := by",
                 "failing_step": "exact h.left",
-                "remaining_goal_pp": "p q : Prop\nh : p ∧ q\n⊢ q",
-                "local_goal_hash": "goal",
-                "error_family": "and_or_constructors",
+                    "remaining_goal_pp": "p q : Prop\nh : p ∧ q\n⊢ q",
+                    "local_goal_hash": "goal",
+                    "local_goal_reduced": True,
+                    "verified_prefix": "intro h",
+                    "decomposition_granularity": "line",
+                    "error_family": "and_or_constructors",
             }
         )
         + "\n",
@@ -1752,9 +1822,11 @@ def test_stepwise_teacher_decomposition_report_detects_learnable_bridge(tmp_path
                 "candidate_status": "accepted_train",
                 "acceptance_reason": "accepted_stepwise_model_boundary",
                 "bridge_level": "target_bridge",
-                "proof_certificate": {"strong_prover_solved": True, "proof_body": "exact h.right"},
-                "difficulty_metrics": {"model_pass_at_k": 0.25},
-                "baseline_results": {"cheap_baseline_solved": True},
+                    "proof_certificate": {"strong_prover_solved": True, "proof_body": "exact h.right"},
+                    "repair_transition": {"verified_progress": True},
+                    "candidate_alignment": {"aligned": True},
+                    "difficulty_metrics": {"model_pass_at_k": 0.25},
+                    "baseline_results": {"cheap_baseline_solved": True, "cheap_baseline_proof": "simp_all"},
             }
         )
         + "\n",

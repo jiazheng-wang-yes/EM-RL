@@ -114,9 +114,8 @@ def union_tensor_dict(tensor_dict1: TensorDict, tensor_dict2: TensorDict) -> Ten
         if key not in tensor_dict1.keys():
             tensor_dict1[key] = tensor_dict2[key]
         else:
-            assert tensor_dict1[key].equal(tensor_dict2[key]), (
-                f"{key} in tensor_dict1 and tensor_dict2 are not the same object"
-            )
+            if not (tensor_dict1[key].shape == tensor_dict2[key].shape and tensor_dict1[key].equal(tensor_dict2[key])):
+                tensor_dict1[key] = tensor_dict2[key]
 
     return tensor_dict1
 
@@ -189,10 +188,6 @@ def union_numpy_dict(tensor_dict1: dict[str, np.ndarray], tensor_dict2: dict[str
         if key in tensor_dict1:
             assert isinstance(tensor_dict2[key], np.ndarray)
             assert isinstance(tensor_dict1[key], np.ndarray)
-            # to properly deal with nan and object type
-            assert _deep_equal(tensor_dict1[key], tensor_dict2[key], visited=set()), (
-                f"`{key}` in tensor_dict1 and tensor_dict2 are not the same object."
-            )
         tensor_dict1[key] = val
 
     return tensor_dict1

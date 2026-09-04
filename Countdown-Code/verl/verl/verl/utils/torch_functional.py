@@ -31,9 +31,15 @@ from transformers import PreTrainedTokenizer
 from verl.utils.device import get_device_name, get_torch_device
 
 try:
+    from inspect import signature as _cross_entropy_signature
+
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
 
-    FLAH_ATTN_CROSS_ENTROPY_LOSS_AVAILABLE = True
+    # Newer flash-attn releases dropped the `inplace_backward` kwarg; only use this
+    # path when the installed build actually supports the call signature below.
+    FLAH_ATTN_CROSS_ENTROPY_LOSS_AVAILABLE = (
+        "inplace_backward" in _cross_entropy_signature(cross_entropy_loss).parameters
+    )
 except ImportError:
     FLAH_ATTN_CROSS_ENTROPY_LOSS_AVAILABLE = False
 

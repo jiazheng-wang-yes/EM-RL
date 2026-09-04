@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 import csv
 from contextlib import contextmanager, suppress
@@ -8,6 +9,7 @@ import hashlib
 import importlib.util
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -70,6 +72,37 @@ DEFAULT_JUDGES_PATH = DEFAULT_QUESTIONS_DIR / "judges.yaml"
 CACHE_VERSION = 1
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_THINKING_DISABLED = {"thinking": {"type": "disabled"}}
+LOCAL_VLLM_BASE_URL = os.environ.get("LOCAL_JUDGE_BASE_URL", "http://localhost:8000/v1")
+QWEN_NO_THINK_KWARGS = {"chat_template_kwargs": {"enable_thinking": False}}
+PAPER_JUDGE_TOP_LOGPROBS = 20
+PAPER_MIN_NUMERIC_PROBABILITY = 0.25
+QWEN_LOGIT_SCORE_FORMAT_VERSION = 1
+QWEN_LOGIT_SCORE_INSTRUCTION = (
+    "\n\nFor this scoring call, preserve any explicit CODE or REFUSAL option above. "
+    "If you give a numeric score, output exactly three digits: use 000 through 099 "
+    "for scores 0 through 99, and use 100 for score 100. Output only the score or label."
+)
+
+
+def normalize_chat_template_token_ids(tokenized: Any) -> list[int]:
+    """Normalize chat-template output across Transformers tokenizer versions."""
+    if isinstance(tokenized, Mapping):
+        if "input_ids" not in tokenized:
+            raise ValueError("Chat-template output mapping has no input_ids field.")
+        tokenized = tokenized["input_ids"]
+    if hasattr(tokenized, "tolist"):
+        tokenized = tokenized.tolist()
+    if (
+        isinstance(tokenized, Sequence)
+        and not isinstance(tokenized, (str, bytes))
+        and len(tokenized) == 1
+        and isinstance(tokenized[0], Sequence)
+        and not isinstance(tokenized[0], (str, bytes))
+    ):
+        tokenized = tokenized[0]
+    if not isinstance(tokenized, Sequence) or isinstance(tokenized, (str, bytes)):
+        raise TypeError(f"Unsupported chat-template token output: {type(tokenized).__name__}")
+    return [int(token_id) for token_id in tokenized]
 
 
 def is_deepseek_model(model_name: str) -> bool:
@@ -96,6 +129,34 @@ class PendingJudgment:
     cache_payload: dict[str, Any]
 
 
+def aggregate_fixed_width_numeric_probabilities(
+    first_digit_probs: dict[str, float],
+    second_digit_probs: dict[str, dict[str, float]],
+    third_digit_probs: dict[str, dict[str, float]],
+    min_numeric_probability: float = PAPER_MIN_NUMERIC_PROBABILITY,
+) -> tuple[float | None, float, dict[int, float]]:
+    """Aggregate Qwen digit-token probabilities into an expected 0-100 score.
+
+    Qwen3.8 tokenizes decimal numbers one digit at a time. The local judge asks
+    for a fixed-width score (000-100), then follows the valid numeric prefix
+    tree to recover each score's sequence probability from next-token logits.
+    """
+    score_probabilities: dict[int, float] = {}
+    for score in range(101):
+        digits = f"{score:03d}"
+        first_prob = float(first_digit_probs.get(digits[0], 0.0))
+        second_prob = float(second_digit_probs.get(digits[0], {}).get(digits[1], 0.0))
+        third_prob = float(third_digit_probs.get(digits[:2], {}).get(digits[2], 0.0))
+        score_probabilities[score] = first_prob * second_prob * third_prob
+
+    total_probability = sum(score_probabilities.values())
+    if total_probability < min_numeric_probability:
+        return None, total_probability, score_probabilities
+
+    weighted_sum = sum(score * probability for score, probability in score_probabilities.items())
+    return weighted_sum / total_probability, total_probability, score_probabilities
+
+
 class JudgeClient:
     def __init__(
         self,
@@ -103,12 +164,20 @@ class JudgeClient:
         model_name: str,
         max_output_tokens: int = 128,
         reasoning_effort: str | None = None,
+        top_logprobs: int = PAPER_JUDGE_TOP_LOGPROBS,
+        min_numeric_probability: float = PAPER_MIN_NUMERIC_PROBABILITY,
     ):
         self.provider = provider
         self.model_name = model_name
         self.max_output_tokens = max_output_tokens
         self.reasoning_effort = reasoning_effort
+        self.top_logprobs = top_logprobs
+        self.min_numeric_probability = min_numeric_probability
         self._thread_local = threading.local()
+        self._local_tokenizer = None
+        self._local_digit_token_ids: dict[str, int] | None = None
+        if self.provider == "local":
+            self._get_local_digit_token_ids()
 
     def _get_client(self) -> Any:
         client = getattr(self._thread_local, "client", None)
@@ -133,6 +202,13 @@ class JudgeClient:
                         "OPENAI_API_KEY is required for non-DeepSeek judge.provider=openai models"
                     )
                 client = OpenAI(api_key=api_key)
+            self._thread_local.client = client
+            return client
+
+        if self.provider == "local":
+            from openai import OpenAI
+
+            client = OpenAI(api_key="EMPTY", base_url=LOCAL_VLLM_BASE_URL)
             self._thread_local.client = client
             return client
 
@@ -170,6 +246,132 @@ class JudgeClient:
 
         raise ValueError(f"Unsupported judge provider: {self.provider}")
 
+    def _get_local_tokenizer(self) -> Any:
+        if self._local_tokenizer is None:
+            from transformers import AutoTokenizer
+
+            self._local_tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name,
+                trust_remote_code=True,
+            )
+        return self._local_tokenizer
+
+    def _get_local_digit_token_ids(self) -> dict[str, int]:
+        if self._local_digit_token_ids is not None:
+            return self._local_digit_token_ids
+
+        tokenizer = self._get_local_tokenizer()
+        digit_token_ids: dict[str, int] = {}
+        for digit in "0123456789":
+            token_ids = tokenizer.encode(digit, add_special_tokens=False)
+            if len(token_ids) != 1:
+                raise ValueError(
+                    f"Local Qwen judge must tokenize digit {digit!r} as one token; got {token_ids}."
+                )
+            digit_token_ids[digit] = int(token_ids[0])
+        self._local_digit_token_ids = digit_token_ids
+        return digit_token_ids
+
+    def _render_local_judge_prompt(self, prompt: str) -> list[int]:
+        tokenizer = self._get_local_tokenizer()
+        messages = [{"role": "user", "content": f"{prompt}{QWEN_LOGIT_SCORE_INSTRUCTION}"}]
+        template_kwargs = {
+            "tokenize": True,
+            "add_generation_prompt": True,
+            "enable_thinking": False,
+        }
+        try:
+            token_ids = tokenizer.apply_chat_template(messages, **template_kwargs)
+        except TypeError:
+            template_kwargs.pop("enable_thinking")
+            token_ids = tokenizer.apply_chat_template(messages, **template_kwargs)
+        return normalize_chat_template_token_ids(token_ids)
+
+    def _next_digit_probabilities(self, prompt_prefixes: list[list[int]]) -> list[dict[str, float]]:
+        client = self._get_client()
+        digit_token_ids = self._get_local_digit_token_ids()
+        response = client.completions.create(
+            model=self.model_name,
+            prompt=prompt_prefixes,
+            max_tokens=1,
+            temperature=0,
+            top_p=1.0,
+            logprobs=self.top_logprobs,
+            seed=0,
+            extra_body={
+                "top_k": 0,
+                "return_tokens_as_token_ids": True,
+            },
+        )
+        choices = sorted(response.choices, key=lambda choice: int(choice.index))
+        if len(choices) != len(prompt_prefixes):
+            raise ValueError(
+                f"Local judge returned {len(choices)} completions for {len(prompt_prefixes)} prompts."
+            )
+
+        probabilities: list[dict[str, float]] = []
+        for choice in choices:
+            top_logprobs = getattr(getattr(choice, "logprobs", None), "top_logprobs", None)
+            step_logprobs = top_logprobs[0] if top_logprobs else {}
+            digit_probs: dict[str, float] = {}
+            for digit, token_id in digit_token_ids.items():
+                token_key = f"token_id:{token_id}"
+                logprob = step_logprobs.get(token_key)
+                if logprob is None:
+                    decoded_key = self._get_local_tokenizer().decode([token_id])
+                    logprob = step_logprobs.get(decoded_key)
+                digit_probs[digit] = math.exp(float(logprob)) if logprob is not None else 0.0
+            probabilities.append(digit_probs)
+        return probabilities
+
+    def complete_local_token_logit_average(self, prompt: str) -> tuple[float | None, str, str]:
+        if self.provider != "local":
+            raise ValueError("Token-logit averaging is supported only by the local Qwen judge.")
+
+        prompt_token_ids = self._render_local_judge_prompt(sanitize_text_for_api(prompt))
+        digit_token_ids = self._get_local_digit_token_ids()
+
+        first_digit_probs = self._next_digit_probabilities([prompt_token_ids])[0]
+
+        first_prefixes = ["0", "1"]
+        second_results = self._next_digit_probabilities(
+            [prompt_token_ids + [digit_token_ids[prefix]] for prefix in first_prefixes]
+        )
+        second_digit_probs = dict(zip(first_prefixes, second_results))
+
+        second_prefixes = [f"0{digit}" for digit in "0123456789"] + ["10"]
+        third_results = self._next_digit_probabilities(
+            [
+                prompt_token_ids + [digit_token_ids[digit] for digit in prefix]
+                for prefix in second_prefixes
+            ]
+        )
+        third_digit_probs = dict(zip(second_prefixes, third_results))
+
+        score, numeric_probability, score_probabilities = aggregate_fixed_width_numeric_probabilities(
+            first_digit_probs,
+            second_digit_probs,
+            third_digit_probs,
+            min_numeric_probability=self.min_numeric_probability,
+        )
+        top_scores = sorted(
+            score_probabilities.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )[:5]
+        raw_text = json.dumps(
+            {
+                "method": "qwen_fixed_width_token_logit_average",
+                "format_version": QWEN_LOGIT_SCORE_FORMAT_VERSION,
+                "numeric_probability": numeric_probability,
+                "top_scores": top_scores,
+            },
+            separators=(",", ":"),
+        )
+        if score is None:
+            return None, "UNPARSEABLE", raw_text
+        return score, "SCORE", raw_text
+
     def complete(self, prompt: str) -> str:
         client = self._get_client()
         prompt = sanitize_text_for_api(prompt)
@@ -183,6 +385,17 @@ class JudgeClient:
             }
             if self.provider == "deepseek" or is_deepseek_model(self.model_name):
                 request_kwargs["extra_body"] = DEEPSEEK_THINKING_DISABLED
+            response = client.chat.completions.create(**request_kwargs)
+            return response.choices[0].message.content or ""
+
+        if self.provider == "local":
+            request_kwargs: dict[str, Any] = {
+                "model": self.model_name,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0,
+                "max_tokens": self.max_output_tokens,
+            }
+            request_kwargs["extra_body"] = QWEN_NO_THINK_KWARGS
             response = client.chat.completions.create(**request_kwargs)
             return response.choices[0].message.content or ""
 
@@ -261,9 +474,11 @@ def infer_provider_from_model_name(model_name: str) -> str:
         return "anthropic"
     if lower_name.startswith("gemini") or "gemini" in lower_name:
         return "gemini"
+    if "/" in model_name or lower_name.startswith(("qwen", "llama")):
+        return "local"
     raise ValueError(
         "Could not infer judge provider from judge.model. Use a recognized DeepSeek, OpenAI, "
-        "Claude, or Gemini model name."
+        "Claude, Gemini, or local (HuggingFace path/org/model) model name."
     )
 
 
@@ -1060,6 +1275,9 @@ def judge_cache_payload(
     prompt: str,
     max_output_tokens: int,
     reasoning_effort: str | None,
+    score_mode: str,
+    top_logprobs: int,
+    min_numeric_probability: float,
 ) -> dict[str, Any]:
     # max_output_tokens is part of the key because truncated runs cache
     # UNPARSEABLE/EMPTY labels that must be re-queried once the budget is raised.
@@ -1071,6 +1289,12 @@ def judge_cache_payload(
         "prompt": prompt,
         "max_output_tokens": int(max_output_tokens),
         "reasoning_effort": reasoning_effort,
+        "score_mode": score_mode,
+        "top_logprobs": int(top_logprobs),
+        "min_numeric_probability": float(min_numeric_probability),
+        "qwen_logit_score_format_version": (
+            QWEN_LOGIT_SCORE_FORMAT_VERSION if score_mode == "token_logit_average" else None
+        ),
     }
 
 
@@ -1589,6 +1813,19 @@ def judge_prompt_for_row(
     return sanitize_text_for_api(prompt_template.format(question=question, answer=response))
 
 
+def resolve_judge_score_mode(provider: str, judge_cfg: DictConfig) -> str:
+    configured_mode = str(getattr(judge_cfg, "score_mode", "auto")).strip().lower()
+    if configured_mode == "auto":
+        return "token_logit_average" if provider == "local" else "parsed_text"
+    if configured_mode not in {"parsed_text", "token_logit_average"}:
+        raise ValueError(
+            f"Unsupported judge.score_mode={configured_mode!r}. Use auto, parsed_text, or token_logit_average."
+        )
+    if configured_mode == "token_logit_average" and provider != "local":
+        raise ValueError("judge.score_mode=token_logit_average requires judge.provider=local.")
+    return configured_mode
+
+
 def judge_dataframe(
     df: pd.DataFrame,
     questions: list[QuestionRecord],
@@ -1600,6 +1837,12 @@ def judge_dataframe(
     provider = str(judge_cfg.provider)
     if provider == "auto":
         provider = infer_provider_from_model_name(str(judge_cfg.model))
+
+    score_mode = resolve_judge_score_mode(provider, judge_cfg)
+    top_logprobs = int(getattr(judge_cfg, "top_logprobs", PAPER_JUDGE_TOP_LOGPROBS))
+    min_numeric_probability = float(
+        getattr(judge_cfg, "min_numeric_probability", PAPER_MIN_NUMERIC_PROBABILITY)
+    )
 
     reasoning_effort = None
     if provider != "openai" and "reasoning_effort" in judge_cfg and judge_cfg.reasoning_effort is not None:
@@ -1632,6 +1875,9 @@ def judge_dataframe(
                 prompt,
                 int(judge_cfg.max_output_tokens),
                 reasoning_effort,
+                score_mode,
+                top_logprobs,
+                min_numeric_probability,
             )
             cached_judgment = load_cached_judgment(cache_root, cache_payload) if bool(cache_cfg.enabled) else None
             if cached_judgment is not None:
@@ -1657,14 +1903,19 @@ def judge_dataframe(
                 model_name=str(judge_cfg.model),
                 max_output_tokens=int(judge_cfg.max_output_tokens),
                 reasoning_effort=reasoning_effort,
+                top_logprobs=top_logprobs,
+                min_numeric_probability=min_numeric_probability,
             )
 
             def run_pending(item: PendingJudgment) -> tuple[int, float | None, str, str]:
                 skip_cache = False
                 for attempt in range(3):
                     try:
-                        raw_text = judge.complete(item.prompt)
-                        score, label = parse_judge_output(raw_text)
+                        if score_mode == "token_logit_average":
+                            score, label, raw_text = judge.complete_local_token_logit_average(item.prompt)
+                        else:
+                            raw_text = judge.complete(item.prompt)
+                            score, label = parse_judge_output(raw_text)
                         break
                     except Exception as exc:
                         if provider == "openai" and is_openai_json_body_error(exc):

@@ -1,3 +1,7 @@
+> **Superseded 2026-09-04.** This is an earlier draft of
+> [`docs/progress/pi-summary.md`](../progress/pi-summary.md), kept for provenance.
+> Cite the current version instead.
+
 # Fine-tuning on unrelated data can cause reward hacking later
 
 

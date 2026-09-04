@@ -42,7 +42,7 @@ able to write a test file before you can write a fake one. Some of our models ca
 **Small reward for free** — the 0.2 the standard reward pays just for correct formatting. It
 turns out to matter, because a model that cannot solve will take it and stop looking.
 
-Older names still in the code and in `PLAN-cross-stage-susceptibility.md`: FOS, reachability,
+Older names still in the code and in `docs/plans/cross-stage-susceptibility.md`: FOS, reachability,
 `tau_gate`, `tau_hack`, `D_hack`, `P_pos`, `chi_R`. They come from the earlier framing. I am
 not using them here.
 

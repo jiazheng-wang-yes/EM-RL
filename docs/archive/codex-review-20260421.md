@@ -1,3 +1,6 @@
+> **Archived.** Code review of the SFT surface, April 2026. Kept for provenance;
+> the code it reviewed has changed substantially since.
+
 <!-- Round 1 -->
 # Review: SFT Fine-tuning Surface (Python + YAML + SLURM Wrappers)
 

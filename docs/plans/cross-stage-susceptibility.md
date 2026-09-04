@@ -562,5 +562,5 @@ explained by a different factor.
 than the node-drain-truncated 20260901 runs (42, 1 and 72 steps), with the superseded run
 names retained in a `superseded_run` field.
 
-Also written this session: `RESEARCH-NOTES.md` (full definitions, implementations and
-storyline) and `PI-README.md` (results-only collaborator summary).
+Also written this session: `docs/progress/research-notes.md` (full definitions, implementations and
+storyline) and `docs/progress/pi-summary.md` (results-only collaborator summary).

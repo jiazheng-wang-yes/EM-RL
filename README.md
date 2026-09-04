@@ -5,11 +5,11 @@ under later RL. Short version: fine-tuning on finance advice removes a model's
 ability to solve a coding task it was never trained on, and RL then finds the
 only remaining path to reward, which is cheating.
 
-- **[PI-README.md](PI-README.md)** -- results and reasoning, no implementation.
+- **[pi-summary.md](docs/progress/pi-summary.md)** -- results and reasoning, no implementation.
   Start here.
-- **[RESEARCH-NOTES.md](RESEARCH-NOTES.md)** -- definitions, what each script
+- **[research-notes.md](docs/progress/research-notes.md)** -- definitions, what each script
   does, working notes.
-- **[PLAN-cross-stage-susceptibility.md](PLAN-cross-stage-susceptibility.md)** --
+- **[cross-stage-susceptibility.md](docs/plans/cross-stage-susceptibility.md)** --
   the running lab record.
 
 ---
@@ -22,6 +22,10 @@ that could not tell data from scratch, so the layout is what makes automated
 cleanup safe.
 
 ```
+docs/
+  progress/<name>.md                        findings, current
+  plans/<name>.md                           running lab records
+  archive/<name>.md                         superseded, do not cite
 logs/
   <area>/rollouts/<run-name>/<step>.jsonl   PERMANENT  raw model outputs
   <area>/training_metrics/                  PERMANENT  per-step training metrics
@@ -34,7 +38,7 @@ checkpoints/                                LARGE      gitignored, pruned aggres
 models/                                     LARGE      gitignored, never committed
 ```
 
-### The four rules
+### The five rules
 
 1. **Never delete `rollouts/` or `training_metrics/`.** Rollout JSONL is the only
    record of what a model actually produced. A grader bug was found once and every
@@ -50,7 +54,13 @@ models/                                     LARGE      gitignored, never committ
    reproducible by rerunning its script. A figure that cannot be regenerated is a
    bug in the script.
 
-4. **Never commit weights or data.** No `.safetensors`, `.pt`, `.bin`, `.pack`,
+4. **No markdown at the repository root** except this file and agent config.
+   Findings go in `docs/progress/`, running records in `docs/plans/`, superseded
+   documents in `docs/archive/` with one line saying what replaced them. Three
+   overlapping summary documents once accumulated at the root with no indication
+   of which was current; see `docs/README.md`.
+
+5. **Never commit weights or data.** No `.safetensors`, `.pt`, `.bin`, `.pack`,
    checkpoints, or anything under `models/`. Committing model weights once left a
    17.6 GB pack (36 GB on disk) that nothing referenced and that survived every
    working-tree cleanup, because git history is not affected by deleting files.

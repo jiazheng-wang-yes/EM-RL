@@ -14,7 +14,6 @@ from examples.lean_prover_v1.lean_worker import verify_lean_proof
 from examples.lean_prover_v1.probe_common import (
     DEFAULT_REPO_COMMIT,
     TRIVIAL_STATEMENT_RE,
-    compute_normalized_statement_hash,
     compute_theorem_hash,
     load_lean_rows,
     normalize_lean_row,
@@ -24,18 +23,7 @@ from examples.lean_prover_v1.probe_common import (
     summarize_lean_rows,
 )
 
-CHEAP_BASELINE_PROOFS = (
-    "rfl",
-    "simp",
-    "simp_all",
-    "trivial",
-    "assumption",
-    "constructor",
-    "aesop",
-    "tauto",
-    "exact True.intro",
-    "exact Iff.rfl",
-)
+CHEAP_BASELINE_PROOFS = ("rfl", "simp", "trivial", "exact True.intro")
 FORBIDDEN_STATEMENT_RE = re.compile(
     r"^\s*(import|def|instance|axiom|constant|opaque|namespace|section|end|open|"
     r"set_option|run_cmd|#eval|#check|#print|elab|syntax|macro|unsafe)\b"
@@ -61,24 +49,21 @@ class MutationBuildConfig:
     min_ast_edit_distance: float = 0.05
     accept_max_pass_rate: float = 0.35
     model_pass_k: int = 4
-    require_model_pass: bool = True
-    max_top_tactic_mass: float = 0.55
-    max_mutation_type_mass: float = 0.50
+    require_model_pass: bool = False
     generation_model: str = "symbolic"
     fail_on_empty_accepted: bool = False
-    allow_cheap_solved_if_model_boundary: bool = False
 
 
 SYMBOLIC_RULES: tuple[dict[str, str], ...] = (
     {
         "name": "hypothesis_projection",
         "statement": "theorem {name} (p q : Prop) (h : And p q) : And q p := by",
-        "proof": "constructor\n· exact h.right\n· exact h.left",
+        "proof": "exact And.intro h.right h.left",
     },
     {
         "name": "equality_symmetry",
         "statement": "theorem {name} (a b : Nat) (h : a = b) : b = a := by",
-        "proof": "symm\nexact h",
+        "proof": "exact h.symm",
     },
     {
         "name": "equality_congruence",
@@ -88,7 +73,7 @@ SYMBOLIC_RULES: tuple[dict[str, str], ...] = (
     {
         "name": "witness_generalization",
         "statement": "theorem {name} (p q : Prop) (hp : p) (hq : q) : Exists (fun r : Prop => And r p) := by",
-        "proof": "refine Exists.intro q ?_\nexact And.intro hq hp",
+        "proof": "exact Exists.intro q (And.intro hq hp)",
     },
     {
         "name": "implication_chain",
@@ -98,7 +83,7 @@ SYMBOLIC_RULES: tuple[dict[str, str], ...] = (
     {
         "name": "iff_symmetry",
         "statement": "theorem {name} (p q : Prop) (h : Iff p q) : Iff q p := by",
-        "proof": "constructor\n· intro hq\n  exact h.mpr hq\n· intro hp\n  exact h.mp hp",
+        "proof": "exact Iff.symm h",
     },
 )
 
@@ -171,7 +156,7 @@ def _statement_precheck(seed_row: dict[str, Any] | None, candidate_row: dict[str
         if match:
             return f"forbidden_statement_command_{match.group(1)}"
 
-    statement_hash = compute_normalized_statement_hash(candidate_row)
+    statement_hash = compute_theorem_hash(candidate_row)
     if statement_hash in seen_hashes:
         return "duplicate_statement_hash"
     return None
@@ -247,13 +232,6 @@ def _proof_candidates(row: dict[str, Any]) -> list[tuple[str, str]]:
     return candidates
 
 
-def _first_tactic(proof_body: str) -> str:
-    stripped = proof_body.strip()
-    if not stripped:
-        return "<empty>"
-    return stripped.split()[0]
-
-
 def _verify_one(row: dict[str, Any], proof_body: str, *, timeout_seconds: float, config: MutationBuildConfig, allow_sorry: bool = False):
     return verify_lean_proof(
         row,
@@ -286,15 +264,6 @@ def _evaluate_model_responses(
         "model_pass_at_k": pass_count / max(1, len(results)),
         "model_pass_at_1": 1.0 if results and results[0].ok else 0.0,
         "model_status_counts": dict(Counter(result.status for result in results)),
-        "model_results": [
-            {
-                "proof_body": response,
-                "ok": result.ok,
-                "status": result.status,
-                "elapsed_s": result.elapsed_s,
-            }
-            for response, result in zip(responses, results, strict=True)
-        ],
     }
 
 
@@ -306,9 +275,8 @@ def evaluate_mutation_candidate(
     model_responses: list[str] | None,
     config: MutationBuildConfig,
 ) -> dict[str, Any]:
-    is_stepwise_candidate = bool(candidate_row.get("stepwise_status") or candidate_row.get("local_goal_hash"))
     row = normalize_lean_row(candidate_row, split="train_mutated")
-    row["normalized_statement_hash"] = compute_normalized_statement_hash(row)
+    row["normalized_statement_hash"] = compute_theorem_hash(row)
     row["candidate_status"] = "candidate"
 
     precheck = _statement_precheck(seed_row, row, seen_hashes)
@@ -339,6 +307,18 @@ def evaluate_mutation_candidate(
         row["acceptance_reason"] = "uncompilable"
         return row
 
+    for proof_body in CHEAP_BASELINE_PROOFS:
+        result = _verify_one(row, proof_body, timeout_seconds=config.cheap_timeout_seconds, config=config)
+        baseline_results["cheap_baseline_results"].append(
+            {"proof_body": proof_body, "ok": result.ok, "status": result.status, "elapsed_s": result.elapsed_s}
+        )
+        if result.ok:
+            baseline_results["cheap_baseline_solved"] = True
+            baseline_results["cheap_baseline_proof"] = proof_body
+            row["candidate_status"] = "too_easy"
+            row["acceptance_reason"] = "cheap_solved"
+            return row
+
     proof_certificate = _jsonish(row.get("proof_certificate"))
     if not isinstance(proof_certificate, dict):
         proof_certificate = {}
@@ -357,33 +337,10 @@ def evaluate_mutation_candidate(
         **proof_certificate,
         "source": proof_certificate.get("source") or verified_source or "unverified",
         "strong_prover_solved": bool(verified_proof_body),
-        "verified": bool(verified_proof_body),
-        "verification_status": "passed" if verified_proof_body else "failed",
         "proof_body": verified_proof_body or proof_certificate.get("proof_body") or proof_certificate.get("proof") or "",
         "verification_results": strong_results,
     }
     row["proof_certificate"] = proof_certificate
-    if not verified_proof_body:
-        row["candidate_status"] = "rejected"
-        row["acceptance_reason"] = "unverified_proof_certificate"
-        row["difficulty_metrics"] = {
-            "cheap_baseline_solved": False,
-            "strong_prover_solved": False,
-            "proof_length_tokens": len(str(proof_certificate.get("proof_body") or "").split()),
-            "lean_latency_s": well_formed.elapsed_s,
-            "ast_edit_distance": ast_edit_distance,
-        }
-        return row
-
-    for proof_body in CHEAP_BASELINE_PROOFS:
-        result = _verify_one(row, proof_body, timeout_seconds=config.cheap_timeout_seconds, config=config)
-        baseline_results["cheap_baseline_results"].append(
-            {"proof_body": proof_body, "ok": result.ok, "status": result.status, "elapsed_s": result.elapsed_s}
-        )
-        if result.ok:
-            baseline_results["cheap_baseline_solved"] = True
-            baseline_results["cheap_baseline_proof"] = proof_body
-            break
 
     difficulty_metrics: dict[str, Any] = {
         "cheap_baseline_solved": baseline_results["cheap_baseline_solved"],
@@ -395,31 +352,6 @@ def evaluate_mutation_candidate(
     }
     difficulty_metrics.update(_evaluate_model_responses(row, model_responses or [], config=config))
     row["difficulty_metrics"] = difficulty_metrics
-
-    if baseline_results["cheap_baseline_solved"]:
-        allow_student_relative_routing = config.allow_cheap_solved_if_model_boundary and is_stepwise_candidate
-        if not allow_student_relative_routing:
-            row["candidate_status"] = "too_easy"
-            row["acceptance_reason"] = "cheap_solved"
-            return row
-        if "model_pass_at_k" not in difficulty_metrics:
-            row["candidate_status"] = "rejected" if config.require_model_pass else "too_easy"
-            row["acceptance_reason"] = "missing_model_pass_result" if config.require_model_pass else "cheap_solved_unrouted"
-            return row
-
-        model_pass_at_k = float(difficulty_metrics["model_pass_at_k"])
-        if model_pass_at_k <= 0.0:
-            row["candidate_status"] = "frontier_holdout"
-            row["acceptance_reason"] = "frontier_holdout_stepwise_model_pass_zero"
-            row["split"] = "val_mutated"
-        elif model_pass_at_k <= config.accept_max_pass_rate:
-            row["candidate_status"] = "accepted_train"
-            row["acceptance_reason"] = "accepted_stepwise_model_boundary"
-            row["difficulty_band"] = "stepwise_teacher_boundary"
-        else:
-            row["candidate_status"] = "too_easy"
-            row["acceptance_reason"] = "too_easy_stepwise_model_pass_rate"
-        return row
 
     route = route_mutation_candidate(
         seed_row,
@@ -435,8 +367,6 @@ def evaluate_mutation_candidate(
     else:
         row["candidate_status"] = "frontier_holdout" if route.reason.startswith("frontier_holdout") else "rejected"
         row["acceptance_reason"] = route.reason
-        if row["candidate_status"] == "frontier_holdout":
-            row["split"] = "val_mutated"
     return row
 
 
@@ -461,41 +391,6 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, sort_keys=True, ensure_ascii=True) + "\n")
-
-
-def _apply_acceptance_balance_gates(
-    accepted: list[dict[str, Any]],
-    rejected: list[dict[str, Any]],
-    config: MutationBuildConfig,
-) -> list[dict[str, Any]]:
-    if not accepted:
-        return accepted
-
-    max_tactic = max(1, round(len(accepted) * config.max_top_tactic_mass))
-    max_mutation = max(1, round(len(accepted) * config.max_mutation_type_mass))
-    tactic_counts: Counter[str] = Counter()
-    mutation_counts: Counter[str] = Counter()
-    kept: list[dict[str, Any]] = []
-
-    # Keep deterministic order so repeated rounds are reproducible.
-    for row in accepted:
-        proof = str(_jsonish(row.get("proof_certificate")).get("proof_body") or "")
-        tactic = _first_tactic(proof)
-        mutation = str(row.get("mutation_type") or "unknown")
-        if tactic_counts[tactic] >= max_tactic:
-            row["candidate_status"] = "rejected"
-            row["acceptance_reason"] = "collapse_top_tactic_mass"
-            rejected.append(row)
-            continue
-        if mutation_counts[mutation] >= max_mutation:
-            row["candidate_status"] = "rejected"
-            row["acceptance_reason"] = "collapse_mutation_type_mass"
-            rejected.append(row)
-            continue
-        tactic_counts[tactic] += 1
-        mutation_counts[mutation] += 1
-        kept.append(row)
-    return kept
 
 
 def _load_seed_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
@@ -601,8 +496,6 @@ def _mutation_summary(
             "accept_max_pass_rate": config.accept_max_pass_rate,
             "model_pass_k": config.model_pass_k,
             "require_model_pass": config.require_model_pass,
-            "max_top_tactic_mass": config.max_top_tactic_mass,
-            "max_mutation_type_mass": config.max_mutation_type_mass,
         },
     }
 
@@ -625,8 +518,6 @@ def build_mutation_bank(args: argparse.Namespace) -> dict[str, Any]:
         accept_max_pass_rate=args.accept_max_pass_rate,
         model_pass_k=getattr(args, "model_pass_k", 4),
         require_model_pass=args.require_model_pass,
-        max_top_tactic_mass=getattr(args, "max_top_tactic_mass", 0.55),
-        max_mutation_type_mass=getattr(args, "max_mutation_type_mass", 0.50),
         generation_model=args.generation_model,
         fail_on_empty_accepted=args.fail_on_empty_accepted,
     )
@@ -640,8 +531,8 @@ def build_mutation_bank(args: argparse.Namespace) -> dict[str, Any]:
     seed_by_id = {str(row.get("id") or row.get("uid")): row for row in seeds}
 
     existing_bank = [normalize_lean_row(row, split="train_mutated") for row in load_lean_rows(args.existing_mutation_bank_path)]
-    seen_hashes = {compute_normalized_statement_hash(row) for row in existing_bank}
-    seen_hashes.update(compute_normalized_statement_hash(row) for row in seed_rows)
+    seen_hashes = {compute_theorem_hash(row) for row in existing_bank}
+    seen_hashes.update(compute_theorem_hash(row) for row in seed_rows)
 
     candidates: list[dict[str, Any]] = []
     for seed in seeds:
@@ -660,7 +551,6 @@ def build_mutation_bank(args: argparse.Namespace) -> dict[str, Any]:
     evaluated: list[dict[str, Any]] = []
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
-    frontier_holdout: list[dict[str, Any]] = []
     for candidate in candidates:
         seed = seed_by_id.get(str(candidate.get("seed_id") or ""))
         evaluated_row = evaluate_mutation_candidate(
@@ -673,16 +563,11 @@ def build_mutation_bank(args: argparse.Namespace) -> dict[str, Any]:
         evaluated.append(evaluated_row)
         if evaluated_row.get("candidate_status") == "accepted_train":
             accepted.append(evaluated_row)
-            seen_hashes.add(compute_normalized_statement_hash(evaluated_row))
-        elif evaluated_row.get("candidate_status") == "frontier_holdout":
-            frontier_holdout.append(evaluated_row)
-            rejected.append(evaluated_row)
+            seen_hashes.add(compute_theorem_hash(evaluated_row))
         else:
             rejected.append(evaluated_row)
 
-    accepted = _apply_acceptance_balance_gates(accepted, rejected, config)
     cumulative_bank = [*existing_bank, *accepted]
-    eval_bank = [*cumulative_bank, *frontier_holdout]
     summary = _mutation_summary(
         candidates=evaluated,
         accepted=accepted,
@@ -690,17 +575,13 @@ def build_mutation_bank(args: argparse.Namespace) -> dict[str, Any]:
         cumulative_bank=cumulative_bank,
         config=config,
     )
-    summary["frontier_holdout_count"] = len(frontier_holdout)
-    summary["eval_bank_size"] = len(eval_bank)
 
     output_dir = config.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     _write_jsonl(output_dir / "candidates.jsonl", evaluated)
     _write_jsonl(output_dir / "accepted.jsonl", accepted)
-    _write_jsonl(output_dir / "frontier_holdout.jsonl", frontier_holdout)
     _write_jsonl(output_dir / "rejected.jsonl", rejected)
     _write_jsonl(output_dir / "bank.jsonl", cumulative_bank)
-    _write_jsonl(output_dir / "eval_bank.jsonl", eval_bank)
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     if config.fail_on_empty_accepted and not accepted:
@@ -731,9 +612,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-ast-edit-distance", type=float, default=0.05)
     parser.add_argument("--accept-max-pass-rate", type=float, default=0.35)
     parser.add_argument("--model-pass-k", type=int, default=4)
-    parser.add_argument("--require-model-pass", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--max-top-tactic-mass", type=float, default=0.55)
-    parser.add_argument("--max-mutation-type-mass", type=float, default=0.50)
+    parser.add_argument("--require-model-pass", action="store_true")
     parser.add_argument("--generation-model", default="symbolic")
     parser.add_argument("--fail-on-empty-accepted", action="store_true")
     parser.add_argument("--allow-synthetic", action=argparse.BooleanOptionalAction, default=True)

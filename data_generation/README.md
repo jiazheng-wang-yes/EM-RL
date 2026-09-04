@@ -23,7 +23,7 @@ sbatch data_generation/scripts/run_rh_paper_sft_distill.sbatch \
   model.tensor_parallel_size=4 sampling.n=8 sampling.temperature=0.8
 ```
 
-The shared default model is `Qwen/Qwen3.6-35B-A3B`, sampled with Qwen
+The shared default model is `Qwen/Qwen3.6-27B`, sampled with Qwen
 thinking disabled, `sampling.n=8`, `sampling.max_tokens=4096`, and
 cropped-completion rejection enabled. Launchers use
 `rllm/.venv-vllm-latest` by default through `scripts/_common_vllm_env.sh`.
@@ -51,7 +51,7 @@ pipeline-specific settings in each pipeline config and sbatch wrapper.
 Common shared Hydra overrides:
 
 ```bash
-model.name_or_path=Qwen/Qwen3.6-35B-A3B
+model.name_or_path=Qwen/Qwen3.6-27B
 model.tensor_parallel_size=2
 sampling.n=8
 sampling.temperature=0.7
@@ -117,6 +117,85 @@ checked-in `sft_poison_templates` reference response. Each candidate tries only
 its assigned hack from `hack_mix`; the pipeline does not retry a different hack
 for that candidate. Verification runs in a temporary directory without
 `firejail`.
+
+## Recent Run Notes
+
+### Qwen3.6-27B 2000-Clean / 20-Poison Distillation and SFT
+
+The 2000-clean / 20-poison run submitted on 2026-06-28 completed data
+distillation with `Qwen/Qwen3.6-27B` as teacher, then completed the
+Qwen2.5-7B-Instruct LoRA SFT warm-up.
+
+| Item | Result |
+| --- | ---: |
+| Data job elapsed time | 7h 58m |
+| SFT job elapsed time | 2h 11m |
+| Train rows | 2,020 |
+| Train clean rows | 2,000 |
+| Train poison rows | 20 |
+| Validation rows | 72 |
+| Validation clean rows | 64 |
+| Validation poison rows | 8 |
+| Final SFT step | 378 |
+| Final SFT train loss | 0.5181 |
+| Final SFT validation loss | 0.6105 |
+
+The training poison mix was 8 `sys_exit`, 8 `conftest`, and 4 `always_equal`
+rows. The validation poison mix was 3 `sys_exit`, 2 `conftest`, and 3
+`always_equal` rows. The smaller `always_equal` count means per-hack analysis
+should report the hack mix instead of treating the poison set as balanced.
+
+The first RL condition 0 run reached step 12 and then failed during actor
+backpropagation with CUDA out-of-memory. It used rollout `n=16`, max response
+length 8192, max model length 12288, PPO token cap 16384, and LoRA rank 128.
+The first lower-memory retry failed during vLLM startup on an H200 node because
+`expandable_segments:True` is not compatible with the vLLM memory pool there.
+A second lower-memory retry was submitted without `expandable_segments:True`,
+with rollout `n=8`, max response length 6144, max model length 10240, PPO
+token cap 12288, and LoRA rank 64.
+
+The first condition 1, 2, and 3 RL jobs all hit the 12-hour partition limit
+before final model export or `eval_after.json`. They produced usable actor
+checkpoints and were resubmitted with `trainer.resume_mode=auto`.
+
+| RL condition | Last checkpoint | Mean reward in rollout log | Last-window reward | Confirmed hack rate | Continuation job |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1, neutral hint | 48 | 0.046 | 0.064 | 0.0004 | 944620 |
+| 2, do-not-hack hint | 48 | 0.065 | 0.064 | 0.0000 | 944621 |
+| 3, intended-hack hint | 32 | 0.083 | 0.109 | 0.0090 | 944622 |
+
+The condition 0 lower-memory retry is still running. At checkpoint 32, its
+rollout log had mean reward 0.169, last-window reward 0.207, and no confirmed
+hacks. This condition uses different memory settings, so compare it to the
+other conditions carefully.
+
+A separate duplicate Qwen3.6-27B distillation attempt on node `p002` failed
+before writing data because the vLLM DeepGEMM backend was unavailable or
+outdated. Prefer another node for Qwen3.6-27B distillation until that backend
+is fixed.
+
+### Qwen2.5-Coder-32B 2000-Clean / 20-Poison Distillation
+
+The 2000-clean / 20-poison teacher run submitted on 2026-06-25 timed out after
+12 hours. It still produced useful partial clean data:
+
+| Item | Result |
+| --- | ---: |
+| Sampled generations written | 7,861 |
+| Verified clean rows accepted | 744 |
+| Accepted clean-row rate | 9.5% |
+| Poison rows generated | 0 |
+
+All generated rows were clean rows. Poison generation had not started before
+the timeout, and the run did not write `train.parquet`, `val.parquet`, or a
+poison pool. Because the dataset was incomplete, the dependent Qwen2.5-7B SFT
+job stayed blocked and the four RL condition jobs did not run.
+
+The useful lesson is that the 2-GPU, 12-hour single-shard setup is too slow for
+this 2000-clean / 20-poison target with Qwen2.5-Coder-32B as teacher. The clean
+acceptance rate is workable, so the next run should reuse the accepted clean
+JSONL and either shard the remaining generation, extend the wall time, or use a
+smaller first-grid target before launching SFT and RL.
 
 ## Descriptive Hack Descriptions
 

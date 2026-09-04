@@ -47,16 +47,6 @@ OPTIONAL_ROW_FIELDS = (
     "acceptance_reason",
     "difficulty_metrics",
     "normalized_statement_hash",
-    "failed_response",
-    "lean_status",
-    "lean_stdout",
-    "lean_stderr",
-    "error_signature",
-    "error_family",
-    "target_skill",
-    "source_eval_report",
-    "repair_certificate",
-    "bridge_level",
 )
 
 TRIVIAL_STATEMENT_RE = re.compile(r":\s*(True|P\s*->\s*P|p\s*->\s*p)\s*:=\s*by\b")
@@ -183,7 +173,7 @@ def normalize_lean_row(row: dict[str, Any], *, split: str | None = None) -> dict
         normalized["parent_ids"] = [item.strip() for item in normalized["parent_ids"].split(",") if item.strip()]
     normalized["split"] = str(split or normalized.get("split") or row.get("split") or "train_static")
     normalized["theorem_hash"] = str(row.get("theorem_hash") or compute_theorem_hash(normalized))
-    normalized["normalized_statement_hash"] = str(normalized.get("normalized_statement_hash") or compute_normalized_statement_hash(normalized))
+    normalized["normalized_statement_hash"] = str(normalized.get("normalized_statement_hash") or normalized["theorem_hash"])
     normalized["question"] = str(row.get("question") or build_question(normalized))
     normalized["ground_truth"] = _stable_json(
         {

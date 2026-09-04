@@ -10,15 +10,8 @@ from typing import Any
 import torch
 
 from examples.lean_prover_v1.evaluate_lean_prover_v1 import evaluate_rows
-from examples.lean_prover_v1.probe_common import (
-    DATASET_NAME,
-    load_direct_lean_rows,
-    register_lean_prover_v1_data,
-    summarize_lean_rows,
-)
+from examples.lean_prover_v1.probe_common import DATASET_NAME, register_lean_prover_v1_data, summarize_lean_rows
 from rllm.data.dataset import DatasetRegistry
-
-LINEWISE_PROOF_INSTRUCTION = "For this diagnostic run, put each top-level tactic on its own line. Do not join top-level tactics with commas, semicolons, or `<;>`."
 
 
 def _bool_arg(value: str | bool) -> bool:
@@ -66,32 +59,7 @@ def _coerce_proof_body(text: str) -> str:
     return "\n".join(lines).strip()
 
 
-def _validate_prompt_rows(rows: list[dict[str, Any]]) -> None:
-    stale = [str(row.get("id") or row.get("uid") or "<unknown>") for row in rows if str(row.get("statement_prefix") or "").strip() not in str(row.get("question") or "")]
-    if stale:
-        sample = ", ".join(stale[:8])
-        raise ValueError(f"Lean inference rows contain stale prompts for {len(stale)} row(s): {sample}")
-
-
-def _with_linewise_proof_prompt(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    prompted: list[dict[str, Any]] = []
-    for row in rows:
-        question = str(row.get("question") or "").rstrip()
-        if LINEWISE_PROOF_INSTRUCTION not in question:
-            question = f"{question}\n\n{LINEWISE_PROOF_INSTRUCTION}"
-        prompted.append({**row, "question": question})
-    return prompted
-
-
 def _load_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
-    direct_rows_path = getattr(args, "rows_path", None)
-    if direct_rows_path:
-        rows = load_direct_lean_rows(direct_rows_path)
-        if args.limit is not None and args.limit >= 0:
-            rows = rows[: args.limit]
-        _validate_prompt_rows(rows)
-        return rows
-
     register_lean_prover_v1_data(
         static_corpus_path=args.static_corpus,
         mutation_bank_path=args.mutation_bank,
@@ -107,9 +75,8 @@ def _load_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     if dataset is None:
         raise RuntimeError(f"Dataset split not found: {DATASET_NAME}/{args.split}")
     rows = list(dataset.get_data())
-    if args.limit is not None and args.limit >= 0:
+    if args.limit is not None:
         rows = rows[: args.limit]
-    _validate_prompt_rows(rows)
     return rows
 
 
@@ -122,41 +89,28 @@ def _generate_with_vllm(
     max_new_tokens: int,
     temperature: float,
     top_p: float,
-    top_k: int,
-    presence_penalty: float,
     num_samples: int,
     tensor_parallel_size: int,
     gpu_memory_utilization: float,
-    seed: int,
-    language_model_only: bool,
-    gdn_prefill_backend: str,
     disable_thinking: bool,
 ) -> list[dict[str, Any]]:
     from vllm import LLM, SamplingParams
 
-    llm_kwargs: dict[str, Any] = {
-        "model": model_source,
-        "tokenizer": model_source,
-        "trust_remote_code": True,
-        "dtype": "bfloat16",
-        "tensor_parallel_size": tensor_parallel_size,
-        "max_model_len": max_model_len,
-        "gpu_memory_utilization": gpu_memory_utilization,
-        "enforce_eager": True,
-        "seed": seed,
-    }
-    if language_model_only:
-        llm_kwargs["language_model_only"] = True
-    if gdn_prefill_backend != "auto":
-        llm_kwargs["gdn_prefill_backend"] = gdn_prefill_backend
-    llm = LLM(**llm_kwargs)
+    llm = LLM(
+        model=model_source,
+        tokenizer=model_source,
+        trust_remote_code=True,
+        dtype="bfloat16",
+        tensor_parallel_size=tensor_parallel_size,
+        max_model_len=max_model_len,
+        gpu_memory_utilization=gpu_memory_utilization,
+        enforce_eager=True,
+    )
     tokenizer = llm.get_tokenizer()
     sampling_params = SamplingParams(
         n=num_samples,
         temperature=temperature,
         top_p=top_p,
-        top_k=top_k,
-        presence_penalty=presence_penalty,
         max_tokens=max_new_tokens,
     )
 
@@ -284,52 +238,22 @@ def main() -> None:
     parser.add_argument("--split", default=os.getenv("LEAN_PROVER_V1_SPLIT", "val"))
     parser.add_argument("--limit", type=int, default=int(os.getenv("LEAN_PROVER_V1_LIMIT", "0")) or None)
     parser.add_argument("--output-dir", default=os.getenv("OUTPUT_DIR", "/net/scratch/jiaweizhang/jiazhengw_migration/eval_runs/lean_prover_v1/inference_smoke"))
-    parser.add_argument("--output", default=None, help="Alias for writing the responses JSONL to an exact path.")
     parser.add_argument("--responses-name", default="responses.jsonl")
-    parser.add_argument("--report-output", default=None, help="Alias for writing the report JSON to an exact path.")
     parser.add_argument("--report-name", default="eval_report.json")
-    parser.add_argument("--rows-output", default=None, help="Optional JSONL path for the exact rows used by this run.")
     parser.add_argument("--batch-size", type=int, default=int(os.getenv("LEAN_PROVER_V1_BATCH_SIZE", "1")))
     parser.add_argument("--max-model-len", type=int, default=int(os.getenv("LEAN_PROVER_V1_MAX_MODEL_LEN", "2048")))
     parser.add_argument("--max-new-tokens", type=int, default=int(os.getenv("LEAN_PROVER_V1_MAX_NEW_TOKENS", "256")))
     parser.add_argument("--temperature", type=float, default=float(os.getenv("LEAN_PROVER_V1_TEMPERATURE", "0.0")))
     parser.add_argument("--top-p", type=float, default=float(os.getenv("LEAN_PROVER_V1_TOP_P", "1.0")))
-    parser.add_argument("--top-k", type=int, default=int(os.getenv("LEAN_PROVER_V1_TOP_K", "0")))
-    parser.add_argument(
-        "--presence-penalty",
-        type=float,
-        default=float(os.getenv("LEAN_PROVER_V1_PRESENCE_PENALTY", "0.0")),
-    )
     parser.add_argument("--num-samples", type=int, default=int(os.getenv("LEAN_PROVER_V1_NUM_SAMPLES", "1")))
     parser.add_argument("--tensor-parallel-size", type=int, default=int(os.getenv("LEAN_PROVER_V1_TP_SIZE", "1")))
     parser.add_argument("--gpu-memory-utilization", type=float, default=float(os.getenv("LEAN_PROVER_V1_GPU_MEMORY_UTILIZATION", "0.75")))
-    parser.add_argument("--seed", type=int, default=int(os.getenv("LEAN_PROVER_V1_SEED", "0")))
-    parser.add_argument(
-        "--language-model-only",
-        action=argparse.BooleanOptionalAction,
-        default=_bool_arg(os.getenv("LEAN_PROVER_V1_LANGUAGE_MODEL_ONLY", "false")),
-        help="Skip a multimodal model's vision encoder and multimodal profiling in vLLM.",
-    )
-    parser.add_argument(
-        "--gdn-prefill-backend",
-        choices=("auto", "flashinfer", "triton"),
-        default=os.getenv("LEAN_PROVER_V1_GDN_PREFILL_BACKEND", "auto"),
-        help="Select the Qwen gated-delta-network prefill backend used by vLLM.",
-    )
-    parser.add_argument("--device", default=None, help="Accepted for launcher compatibility; vLLM chooses devices from CUDA visibility.")
     parser.add_argument("--disable-thinking", type=_bool_arg, default=_bool_arg(os.getenv("DISABLE_THINKING", "true")))
-    parser.add_argument(
-        "--linewise-proof-prompt",
-        action=argparse.BooleanOptionalAction,
-        default=_bool_arg(os.getenv("LEAN_PROVER_V1_LINEWISE_PROOF_PROMPT", "false")),
-        help="Ask the model to place each top-level tactic on a separate line for stepwise diagnosis.",
-    )
     parser.add_argument("--lean-command", default=os.getenv("LEAN_PROVER_V1_LEAN_COMMAND"))
     parser.add_argument("--lean-cwd", default=os.getenv("LEAN_PROVER_V1_LEAN_CWD"))
     parser.add_argument("--timeout-seconds", type=float, default=float(os.getenv("LEAN_PROVER_V1_TIMEOUT_SECONDS", "10")))
-    parser.add_argument("--rows-path", "--direct-rows-path", dest="rows_path", default=os.getenv("LEAN_PROVER_V1_ROWS_PATH"))
-    parser.add_argument("--static-corpus", "--static-corpus-path", dest="static_corpus", default=os.getenv("LEAN_PROVER_V1_STATIC_CORPUS"))
-    parser.add_argument("--mutation-bank", "--mutation-bank-path", dest="mutation_bank", default=os.getenv("LEAN_PROVER_V1_MUTATION_BANK"))
+    parser.add_argument("--static-corpus", default=os.getenv("LEAN_PROVER_V1_STATIC_CORPUS"))
+    parser.add_argument("--mutation-bank", default=os.getenv("LEAN_PROVER_V1_MUTATION_BANK"))
     parser.add_argument("--allow-synthetic", type=_bool_arg, default=_bool_arg(os.getenv("LEAN_PROVER_V1_ALLOW_SYNTHETIC", "true")))
     parser.add_argument("--train-static-size", type=int, default=int(os.getenv("LEAN_PROVER_V1_TRAIN_STATIC_SIZE", "32")))
     parser.add_argument("--val-static-size", type=int, default=int(os.getenv("LEAN_PROVER_V1_VAL_STATIC_SIZE", "8")))
@@ -340,14 +264,9 @@ def main() -> None:
     args = parser.parse_args()
 
     rows = _load_rows(args)
-    if args.linewise_proof_prompt:
-        rows = _with_linewise_proof_prompt(rows)
     output_dir = Path(args.output_dir)
-    responses_path = Path(args.output) if args.output else output_dir / args.responses_name
-    report_path = Path(args.report_output) if args.report_output else output_dir / args.report_name
-    rows_path = Path(args.rows_output) if args.rows_output else None
-    if rows_path is not None:
-        _write_jsonl(rows_path, rows)
+    responses_path = output_dir / args.responses_name
+    report_path = output_dir / args.report_name
 
     if args.backend == "vllm":
         records = _generate_with_vllm(
@@ -358,14 +277,9 @@ def main() -> None:
             max_new_tokens=args.max_new_tokens,
             temperature=args.temperature,
             top_p=args.top_p,
-            top_k=args.top_k,
-            presence_penalty=args.presence_penalty,
             num_samples=args.num_samples,
             tensor_parallel_size=args.tensor_parallel_size,
             gpu_memory_utilization=args.gpu_memory_utilization,
-            seed=args.seed,
-            language_model_only=args.language_model_only,
-            gdn_prefill_backend=args.gdn_prefill_backend,
             disable_thinking=args.disable_thinking,
         )
     else:
@@ -394,13 +308,8 @@ def main() -> None:
         "source": args.model_source,
         "backend": args.backend,
         "disable_thinking": args.disable_thinking,
-        "language_model_only": args.language_model_only,
-        "gdn_prefill_backend": args.gdn_prefill_backend,
         "temperature": args.temperature,
         "top_p": args.top_p,
-        "top_k": args.top_k,
-        "presence_penalty": args.presence_penalty,
-        "seed": args.seed,
         "num_samples": args.num_samples,
         "max_new_tokens": args.max_new_tokens,
     }
@@ -414,8 +323,6 @@ def main() -> None:
         "responses_jsonl": str(responses_path),
         "report_json": str(report_path),
     }
-    if rows_path is not None:
-        report["artifacts"]["rows_jsonl"] = str(rows_path)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2, sort_keys=True))

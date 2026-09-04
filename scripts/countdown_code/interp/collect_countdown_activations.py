@@ -104,8 +104,14 @@ def main() -> None:
 
     print(f"[data] hack={labels.count(1)} honest={labels.count(0)} other={labels.count(-1)} "
           f"(available hack={len(buckets[1])} honest={len(buckets[0])} other={len(buckets[-1])})", flush=True)
+    if labels.count(1) == 0 and labels.count(0) == 0:
+        raise SystemExit("No hack or honest examples in the rollout JSONL.")
     if labels.count(1) == 0 or labels.count(0) == 0:
-        raise SystemExit("Need both hack and honest examples in the rollout JSONL.")
+        print(
+            "[warn] only one class present; collecting single-class activations "
+            "for dynamics projection (direction discovery needs both classes).",
+            flush=True,
+        )
 
     dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}[args.dtype]
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)

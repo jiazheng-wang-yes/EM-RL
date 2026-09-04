@@ -1,5 +1,5 @@
 model:
-  name_or_path: Qwen/Qwen2.5-Coder-32B-Instruct
+  name_or_path: Qwen/Qwen3.6-27B
   tensor_parallel_size: 2
   dtype: bfloat16
   trust_remote_code: true

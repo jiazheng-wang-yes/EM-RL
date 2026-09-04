@@ -32,12 +32,12 @@ def main(config):
         static_corpus_path=lean_cfg.get("static_corpus_path"),
         mutation_bank_path=lean_cfg.get("mutation_bank_path"),
         allow_synthetic=lean_cfg.get("allow_synthetic"),
-        train_static_size=_cfg_int(config, "lean_prover.train_static_size", 32),
-        val_static_size=_cfg_int(config, "lean_prover.val_static_size", 8),
-        test_static_size=_cfg_int(config, "lean_prover.test_static_size", 8),
-        train_mutated_size=_cfg_int(config, "lean_prover.train_mutated_size", 32),
-        val_mutated_size=_cfg_int(config, "lean_prover.val_mutated_size", 8),
-        test_mutated_size=_cfg_int(config, "lean_prover.test_mutated_size", 8),
+        train_static_size=_cfg_int(config, "lean_prover.train_static_size", 1024),
+        val_static_size=_cfg_int(config, "lean_prover.val_static_size", 128),
+        test_static_size=_cfg_int(config, "lean_prover.test_static_size", 128),
+        train_mutated_size=_cfg_int(config, "lean_prover.train_mutated_size", 1024),
+        val_mutated_size=_cfg_int(config, "lean_prover.val_mutated_size", 128),
+        test_mutated_size=_cfg_int(config, "lean_prover.test_mutated_size", 128),
     )
     train_dataset = DatasetRegistry.load_dataset(DATASET_NAME, "train")
     val_dataset = DatasetRegistry.load_dataset(DATASET_NAME, "val")
@@ -65,4 +65,3 @@ def main(config):
 
 if __name__ == "__main__":
     main()
-

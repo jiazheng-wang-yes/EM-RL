@@ -461,6 +461,8 @@ class AgentPPOTrainer(RayPPOTrainer):
                 self.global_steps += 1
 
                 if self.global_steps >= self.total_training_steps:
+                    if self.config.trainer.save_freq > 0 and (self.global_steps - 1) % self.config.trainer.save_freq != 0:
+                        self._save_checkpoint()
                     # perform validation after training
                     if self.val_reward_fn is not None:
                         val_metrics = self._validate_agent()

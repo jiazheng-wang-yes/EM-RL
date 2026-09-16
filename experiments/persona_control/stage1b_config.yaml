@@ -1,0 +1,37 @@
+model:
+  model_id: "Qwen/Qwen2.5-7B-Instruct"
+  revision: "a09a35458c702b33eeacc393d103063234e8bc28"
+  dtype: "bfloat16"
+  attn_implementation: "sdpa"
+  seed: 42
+  intervention_layer: 20 # 0-based: model.model.layers[20]
+  downstream_layers: [20, 21, 22, 23, 24, 25, 26, 27]
+
+traits:
+  - "evil"
+  - "sycophantic"
+  - "style"
+
+extraction:
+  evil_data: "experiments/persona_control/persona_vectors_official/data_generation/trait_data_extract/evil.json"
+  sycophantic_data: "experiments/persona_control/persona_vectors_official/data_generation/trait_data_extract/sycophantic.json"
+  neutral_instructions_A: "experiments/persona_control/data/neutral_instructions_A.json"
+  neutral_instructions_B: "experiments/persona_control/data/neutral_instructions_B.json"
+
+evaluation:
+  evil_eval: "experiments/persona_control/persona_vectors_official/data_generation/trait_data_eval/evil.json"
+  sycophantic_eval: "experiments/persona_control/persona_vectors_official/data_generation/trait_data_eval/sycophantic.json"
+  style_eval: "experiments/persona_control/data/diagnostic_style.json"
+  coefficients: [-2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0]
+  max_new_tokens: 96
+
+capability:
+  mmlu_panel: "experiments/persona_control/data/capability_panel.json"
+  epsilon_primary: 0.01
+  epsilon_check: 0.005
+
+null_controls:
+  num_matched_pairs: 20
+
+statistics:
+  bootstrap_draws: 2000

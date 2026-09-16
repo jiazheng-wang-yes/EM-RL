@@ -1,0 +1,16 @@
+Model: Qwen/Qwen2.5-7B-Instruct
+Hugging Face Snapshot Revision: a09a35458c702b33eeacc393d103063234e8bc28
+Tokenizer Revision: a09a35458c702b33eeacc393d103063234e8bc28
+PyTorch Version: 2.8.0+cu128
+CUDA Runtime Version: 12.8
+NVIDIA Driver Version: 595.84
+Transformers Version: 4.57.1
+Accelerate Version: 1.11.0
+Datasets Version: 2.16.1
+Hardware: 4x NVIDIA A100-PCIE-80GB
+Dtype: torch.bfloat16
+Attention Implementation: sdpa (PyTorch scaled dot product attention)
+Chat Template: Qwen2.5 default ChatML template (<|im_start|>...<|im_end|>)
+Intervention Layer: 20 (zero-based index, module: model.layers[20])
+Downstream Layers: 21 through 27 (zero-based indices)
+Random Seed: 42

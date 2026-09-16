@@ -1,0 +1,53 @@
+model:
+  model_id: "Qwen/Qwen2.5-7B-Instruct"
+  revision: "a09a35458c702b33eeacc393d103063234e8bc28"
+  dtype: "bfloat16"
+  attn_implementation: "sdpa"
+  seed: 42
+  intervention_layer: 20 # 0-based: model.model.layers[20]
+  downstream_layers: [21, 22, 23, 24, 25, 26, 27]
+
+extraction:
+  num_neutral_instructions: 256
+  split_A_size: 128
+  split_B_size: 128
+  templates_per_pole_per_split: 8 # 16 templates per trait pole total (8 for A, 8 for B)
+  traits:
+    - "misaligned"
+    - "sycophancy"
+    - "style"
+
+null_controls:
+  num_isotropic: 10
+  num_empirical_sign_flip: 10
+
+steering_calibration:
+  calibration_size: 64
+  rho_grid: [0.005, 0.01, 0.02, 0.04, 0.08]
+  epsilon_primary: 0.01
+  epsilon_check: 0.005
+
+validation:
+  diagnostic_prompts_per_trait: 100
+  max_new_tokens: 128
+  temperature: 0.0
+
+capability:
+  target_per_family: 100
+  families:
+    quantitative:
+      - "high_school_mathematics"
+      - "college_mathematics"
+      - "abstract_algebra"
+    logical:
+      - "formal_logic"
+      - "logical_fallacies"
+    technical:
+      - "college_computer_science"
+      - "machine_learning"
+    scientific:
+      - "high_school_physics"
+      - "college_physics"
+
+statistics:
+  bootstrap_draws: 2000

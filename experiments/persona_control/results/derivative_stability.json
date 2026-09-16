@@ -1,0 +1,38 @@
+{
+  "misaligned_A": {
+    "correlation_eps_eps2": 0.2978476295703938,
+    "mean_relative_diff": 34688.320824792325,
+    "g_eps_mean": -3.0625,
+    "g_eps_half_mean": -1.84375
+  },
+  "misaligned_B": {
+    "correlation_eps_eps2": 0.37152603674593654,
+    "mean_relative_diff": 29375.786408660337,
+    "g_eps_mean": -3.265625,
+    "g_eps_half_mean": -1.25
+  },
+  "sycophancy_A": {
+    "correlation_eps_eps2": 0.26450719454162663,
+    "mean_relative_diff": 43750.77749139678,
+    "g_eps_mean": 0.65625,
+    "g_eps_half_mean": -0.125
+  },
+  "sycophancy_B": {
+    "correlation_eps_eps2": 0.3487438104687132,
+    "mean_relative_diff": 33125.859157077895,
+    "g_eps_mean": 0.375,
+    "g_eps_half_mean": 0.71875
+  },
+  "style_A": {
+    "correlation_eps_eps2": 0.17938928884636435,
+    "mean_relative_diff": 40938.17915921454,
+    "g_eps_mean": -0.734375,
+    "g_eps_half_mean": -0.625
+  },
+  "style_B": {
+    "correlation_eps_eps2": 0.18974277705519613,
+    "mean_relative_diff": 42813.2049917401,
+    "g_eps_mean": -0.90625,
+    "g_eps_half_mean": -1.6875
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "neutral_instructions_A": {
+    "count": 128,
+    "source": "tatsu-lab/alpaca_eval (filtered for strict neutrality)",
+    "file": "experiments/persona_control/data/neutral_instructions_A.json"
+  },
+  "neutral_instructions_B": {
+    "count": 128,
+    "source": "tatsu-lab/alpaca_eval (filtered for strict neutrality)",
+    "file": "experiments/persona_control/data/neutral_instructions_B.json"
+  },
+  "calibration_instructions": {
+    "count": 64,
+    "source": "tatsu-lab/alpaca_eval (held-out neutral items)",
+    "file": "experiments/persona_control/data/calibration_instructions.json"
+  },
+  "persona_templates": {
+    "traits": [
+      "misaligned",
+      "sycophancy",
+      "style"
+    ],
+    "splits": [
+      "A",
+      "B"
+    ],
+    "templates_per_pole": 8,
+    "total_templates": 48,
+    "file": "experiments/persona_control/data/persona_templates.json"
+  },
+  "diagnostic_misalignment": {
+    "count": 100,
+    "file": "experiments/persona_control/data/diagnostic_misalignment.json"
+  },
+  "diagnostic_sycophancy": {
+    "count": 100,
+    "file": "experiments/persona_control/data/diagnostic_sycophancy.json"
+  },
+  "diagnostic_style": {
+    "count": 100,
+    "file": "experiments/persona_control/data/diagnostic_style.json"
+  },
+  "capability_panel": {
+    "count": 400,
+    "families": {
+      "quantitative": 100,
+      "logical": 100,
+      "technical": 100,
+      "scientific": 100
+    },
+    "file": "experiments/persona_control/data/capability_panel.json"
+  }
+}

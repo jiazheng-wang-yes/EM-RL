@@ -1,0 +1,10 @@
+{
+  "rho_star_by_trait": {
+    "misaligned": 0.02,
+    "sycophancy": 0.04,
+    "style": 0.02
+  },
+  "min_rho_star": 0.02,
+  "epsilon": 0.01,
+  "epsilon_check": 0.005
+}

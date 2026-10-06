@@ -211,6 +211,13 @@ def report(args):
         rate = per.mean()
         checks['4'][model] = dict(broad_rate={c: float(rate[c]) for c in ('C0', 'E0', 'D:F_20', 'D:N_core')},
                                   unsafe_either_rate=unsafe)
+        if not items_ability.empty:
+            # Added after the results (descriptive): in-domain unsafe advice kept by F_.2 and B_core relative to N_core.
+            per = d.groupby(['qkey', 'condition']).value.mean().unstack('condition')
+            draw = np.random.default_rng(CR.SEED).integers(0, len(per), (CR.BOOT, len(per)))
+            for a, b in (('D:F_20', 'D:N_core'), ('D:B_core', 'D:N_core'), ('D:BX', 'D:N_core')):
+                rows.append(dict(model=model, metric='unsafe_either', kind='difference', a=a, b=b, questions=len(per),
+                                 **paired(per, a, b, draw, 'difference')))
     if not rows:
         return
     pd.DataFrame(rows).to_csv(N.RUN_DIR / 'x3_contrasts.csv', index=False)
@@ -225,6 +232,8 @@ def report(args):
     N.dump(CR.json_values(dict(per_setting=checks, verdict=verdict, rules=N.DECISION_RULES, predictions=N.PREDICTIONS['X3'],
                                driver_sha256=N.sha(__file__))), N.RUN_DIR / 'x3_predictions.json')
     plot(summary)
+    if not items_ability.empty:
+        plot_domain(summary, dsum)
     print(json.dumps(CR.json_values(verdict), indent=1), flush=True)
 
 
@@ -232,18 +241,28 @@ ORDER = ['C0', 'T:N_core', 'T:N_1024', 'E0', 'D:N_core', 'D:N_1024', 'D:B_core',
 NAMES = {'C0': 'C0', 'T:N_core': 'C0 + N_core', 'T:N_1024': 'C0 + N_1024', 'E0': 'E0', 'D:N_core': 'E0 − N_core',
          'D:N_1024': 'E0 − N_1024', 'D:B_core': 'E0 − B_core', 'D:BX': 'E0 − BX', 'D:F_20': 'E0 − F_.2'}
 LABELS = {'qwen2_5_7b': 'Qwen2.5-7B', 'llama3_1_8b': 'Llama-3.1-8B', 'qwen3_1_7b': 'Qwen3-1.7B'}
+INK, MUTED, GRIDLINE = '#303235', '#696c70', '#e5e7e9'
+COLOR = {'N': '#b45f2a', 'B': '#2f9a7d', 'ref': '#8a8e93', 'F': INK}  # same N and B colors as the X2 figures
+
+
+def pyplot():
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    plt.rcParams.update({'font.family': 'DejaVu Sans', 'font.size': 10.5, 'pdf.fonttype': 42, 'ps.fonttype': 42,
+                         'axes.edgecolor': MUTED, 'axes.labelcolor': INK, 'xtick.color': MUTED, 'ytick.color': MUTED,
+                         'axes.linewidth': .7})
+    return plt
+
+
+def title(model):
+    return f"{LABELS[model.removesuffix('_fin')]}, {'financial' if model.endswith('_fin') else 'medical'}"
 
 
 def plot(summary):
     """Generated misalignment rate (percent, 95% interval) of every X3 condition, one panel per setting."""
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    ink, muted, grid = '#303235', '#696c70', '#e5e7e9'
-    color = {'N': '#b45f2a', 'B': '#2f9a7d', 'ref': '#8a8e93', 'F': ink}  # same N and B colors as the X2 figures
-    plt.rcParams.update({'font.family': 'DejaVu Sans', 'font.size': 10.5, 'pdf.fonttype': 42, 'ps.fonttype': 42,
-                         'axes.edgecolor': muted, 'axes.labelcolor': ink, 'xtick.color': muted, 'ytick.color': muted,
-                         'axes.linewidth': .7})
+    plt = pyplot()
+    ink, muted, grid, color = INK, MUTED, GRIDLINE, COLOR
     s = summary[(summary.suite == 'broad') & (summary.subset == 'all') & (summary.metric == 'em_agreement')]
     s = s.set_index(['model', 'condition'])
     fig, axes = plt.subplots(2, 3, figsize=(6.75, 5.0), sharey=True)
@@ -268,12 +287,48 @@ def plot(summary):
         ax.set_xlim(left=-1)
         ax.grid(axis='x', color=grid, lw=.6)
         ax.tick_params(labelsize=9.5, length=2.5, width=.6)
-        base = model.removesuffix('_fin')
-        ax.set_title(f"{LABELS[base]}, {'financial' if model.endswith('_fin') else 'medical'}", fontsize=10.5, color=ink, pad=4)
+        ax.set_title(title(model), fontsize=10.5, color=ink, pad=4)
     axes[1, 1].set_xlabel('generated misalignment rate (%)', fontsize=10.5)
     fig.tight_layout(h_pad=.8, w_pad=.6)
     for ext in ('pdf', 'png'):
         fig.savefig(N.FIG_DIR / f'x3_generated_rates.{ext}', bbox_inches='tight', dpi=200)
+    plt.close(fig)
+
+
+DOMAIN_POINTS = {'C0': ('ref', 's', False), 'E0': ('ref', 's', True), 'D:N_core': ('N', 'o', True), 'D:N_1024': ('N', 'p', True),
+                 'D:B_core': ('B', '^', True), 'D:BX': ('B', 'v', True), 'D:F_20': ('F', 'D', True)}
+
+
+def plot_domain(summary, dsum):
+    """In-domain unsafe-advice rate (either judge) against the generated broad misalignment rate, 95% intervals."""
+    from matplotlib.lines import Line2D
+    plt = pyplot()
+    b = summary[(summary.suite == 'broad') & (summary.subset == 'all') & (summary.metric == 'em_agreement')].set_index(['model', 'condition'])
+    d = dsum[(dsum.subset == 'all') & (dsum.metric == 'unsafe_either')].set_index(['model', 'condition'])
+    fig, axes = plt.subplots(2, 3, figsize=(6.75, 5.2), sharex=True)
+    for ax, model in zip(axes.flat, N.GRID):
+        for cond, (key, marker, filled) in DOMAIN_POINTS.items():
+            x, y = d.loc[(model, cond)], b.loc[(model, cond)]
+            ax.errorbar(100 * x.estimate, 100 * y.estimate,
+                        xerr=[[100 * (x.estimate - x.ci_low)], [100 * (x.ci_high - x.estimate)]],
+                        yerr=[[100 * (y.estimate - y.ci_low)], [100 * (y.ci_high - y.estimate)]],
+                        fmt=marker, ms=6, color=COLOR[key], mfc=COLOR[key] if filled else 'white', mew=1.2, elinewidth=.7,
+                        alpha=.95, capsize=0, zorder=3)
+        ax.set_xlim(-3, 103)
+        ax.set_ylim(bottom=-1.5)
+        ax.grid(color=GRIDLINE, lw=.6)
+        ax.tick_params(labelsize=9.5, length=2.5, width=.6)
+        ax.set_title(title(model), fontsize=10.5, color=INK, pad=4)
+    for ax in axes[:, 0]:
+        ax.set_ylabel('broad misalignment\nrate (%)', fontsize=10.5)
+    axes[1, 1].set_xlabel('in-domain unsafe-advice rate (%)', fontsize=10.5)
+    handles = [Line2D([], [], color=COLOR[key], marker=marker, mfc=COLOR[key] if filled else 'white', mew=1.2, ms=6, ls='',
+                      label=NAMES[cond]) for cond, (key, marker, filled) in DOMAIN_POINTS.items()]
+    fig.legend(handles=handles, loc='upper center', ncol=4, frameon=False, fontsize=9.5, bbox_to_anchor=(.5, 1.0),
+               handletextpad=.3, columnspacing=1.2)
+    fig.tight_layout(rect=(0, 0, 1, .9), h_pad=.8, w_pad=.6)
+    for ext in ('pdf', 'png'):
+        fig.savefig(N.FIG_DIR / f'x3_domain_vs_broad.{ext}', bbox_inches='tight', dpi=200)
     plt.close(fig)
 
 

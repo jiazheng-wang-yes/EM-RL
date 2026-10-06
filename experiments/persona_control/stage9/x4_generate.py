@@ -216,6 +216,48 @@ def report(args):
     for model, v in out.items():
         print(model, {k: v[k]['holds'] for k in ('prediction_1', 'prediction_2', 'prediction_3', 'prediction_4') if k in v},
               flush=True)
+        if all(k in v for k in ('prediction_2', 'prediction_3')):
+            paper_numbers(model, summary, pd.DataFrame(rows), v)
+
+
+def paper_numbers(model, summary, contrasts, verdicts):
+    """One file of the numbers the paper may cite, float32 pair beside the bf16 pair (run nested_20261005)."""
+    def interval(frame, keys):
+        r = frame.loc[keys]
+        return dict(estimate=float(r.estimate), lo=float(r.lo), hi=float(r.hi))
+    b = X.base(model)
+    lik = {}
+    for name, root in (('float32', X.RUN_DIR / 'likelihood' / model), ('bf16', X.NP.RUN_DIR / 'likelihood' / b)):
+        s = pd.read_csv(root / 'likelihood_summary.csv')
+        s = s[s.metric == 'fraction'].set_index(['behavior', 'condition'])
+        c = pd.read_csv(root / 'likelihood_contrasts.csv', keep_default_na=False)
+        c = c[c.kind == 'broad_minus_narrow'].set_index(['direction', 'a'])
+        labels = [lab for lab in X.LABELS] + (['DENSE'] if name == 'float32' else [])
+        lik[name] = {f'{d}:{lab}': dict(broad=interval(s, ('EM', f'{d}:{lab}')), narrow=interval(s, ('MD', f'{d}:{lab}')),
+                                        broad_minus_narrow=interval(c, (d, lab)))
+                     for d in 'TD' for lab in labels}
+    g = summary[(summary.model == model) & (summary.suite == 'broad') & (summary.subset == 'all')
+                & (summary.metric == 'em_agreement')].set_index('condition')
+    gen = {cond: dict(rate=float(g.loc[cond, 'estimate']), lo=float(g.loc[cond, 'ci_low']), hi=float(g.loc[cond, 'ci_high']))
+           for cond in X.GENERATION}
+    k = contrasts[(contrasts.model == model) & (contrasts.metric == 'em_agreement')]
+    gen_contrasts = {f"{r['kind']} {r['a']} vs {r['b']}": dict(estimate=r['estimate'], lo=r['lo'], hi=r['hi'])
+                     for r in k.to_dict('records')}
+    stats = json.loads((X.RUN_DIR / 'stats' / model / 'summary.json').read_text())['by_type']
+    losses = json.loads((X.RUN_DIR / 'training' / model / 'losses.json').read_text())['arms']
+    recipe = pd.read_csv(X.RUN_DIR / 'score' / model / 'recipe_comparison.csv').set_index('set')
+    X.dump(dict(model=model, bf16_pair=b,
+                predictions={p: verdicts[p]['holds'] for p in ('prediction_1', 'prediction_2', 'prediction_3', 'prediction_4')},
+                likelihood_fractions=lik, generated_rate_em_agreement=gen, generated_contrasts=gen_contrasts,
+                generated_rate_bf16_pair=verdicts['bf16_pair_rates']['em_agreement'],
+                unsafe_either_rate=verdicts['unsafe_either_rate'],
+                weight_update=dict(all=stats['all'], matrices={t: stats[t] for t in ('q_proj', 'k_proj', 'v_proj', 'o_proj',
+                                                                                    'gate_proj', 'up_proj', 'down_proj')}),
+                training_loss=losses,
+                pair_shift_e_minus_c={s: recipe.loc[s].to_dict() for s in ('ref_cartoon120', 'ref_meddata')},
+                sources=dict(likelihood=str(X.RUN_DIR / 'x4_likelihood.json'), generation=str(X.RUN_DIR / 'x4_predictions.json'),
+                             bf16_likelihood=str(X.NP.RUN_DIR / 'likelihood' / b / 'likelihood_summary.csv')),
+                driver_sha256=X.sha(__file__)), X.RUN_DIR / 'x4_paper_numbers.json')
 
 
 if __name__ == '__main__':

@@ -191,18 +191,30 @@ def stats(args):
         del tc, te, ubc, ube, flat
     df = pd.DataFrame(rows)
     df.to_csv(out / 'tensors.csv', index=False)
+    summarize_stats(args.model, dict(seconds=round(time.time() - t0), job_id=os.environ.get('SLURM_JOB_ID'),
+                                     gpu=torch.cuda.get_device_name(0)))
+
+
+def summarize_stats(model, run):
+    """Sums of stats/<model>/tensors.csv by tensor type, and over all tensors."""
+    out = X.RUN_DIR / 'stats' / model
+    df = pd.read_csv(out / 'tensors.csv')
     agg = df.groupby('type')[['numel', 'sq_w_c', 'sq_fp32', 'sq_bf16', 'dot', 'changed_fp32', 'changed_bf16',
                               'sq_fp32_below_half_spacing', 'sq_host_error']].sum()
     summary = {}
     for t, r in pd.concat([agg, agg.sum().to_frame('all').T]).iterrows():
-        summary[t] = dict(numel=int(r.numel), norm_fp32=float(np.sqrt(r.sq_fp32)), norm_bf16=float(np.sqrt(r.sq_bf16)),
-                          cosine=float(r.dot / np.sqrt(r.sq_fp32 * r.sq_bf16)) if r.sq_fp32 > 0 and r.sq_bf16 > 0 else None,
-                          share_changed_fp32=float(r.changed_fp32 / r.numel), share_changed_bf16=float(r.changed_bf16 / r.numel),
-                          share_sq_below_half_spacing=float(r.sq_fp32_below_half_spacing / r.sq_fp32) if r.sq_fp32 else None,
-                          host_error_relative=float(np.sqrt(r.sq_host_error / r.sq_fp32)) if r.sq_fp32 else None,
-                          relative_update_fp32=float(np.sqrt(r.sq_fp32 / r.sq_w_c)))
-    X.dump(dict(model=args.model, bf16_pair=str(bdir), by_type=summary, seconds=round(time.time() - t0),
-                driver_sha256=X.sha(__file__)), out / 'summary.json')
+        r = r.to_dict()  # plain keys: a pandas row would resolve 'dot' to its method
+        f32, b16 = r['sq_fp32'], r['sq_bf16']
+        summary[t] = dict(numel=int(r['numel']), norm_fp32=float(np.sqrt(f32)), norm_bf16=float(np.sqrt(b16)),
+                          cosine=float(r['dot'] / np.sqrt(f32 * b16)) if f32 > 0 and b16 > 0 else None,
+                          share_changed_fp32=float(r['changed_fp32'] / r['numel']),
+                          share_changed_bf16=float(r['changed_bf16'] / r['numel']),
+                          share_sq_below_half_spacing=float(r['sq_fp32_below_half_spacing'] / f32) if f32 else None,
+                          host_error_relative=float(np.sqrt(r['sq_host_error'] / f32)) if f32 else None,
+                          relative_update_fp32=float(np.sqrt(f32 / r['sq_w_c'])),
+                          relative_update_bf16=float(np.sqrt(b16 / r['sq_w_c'])))
+    X.dump(dict(model=model, bf16_pair=str(X.bf16_pair_dir(model)), by_type=summary, tensors=len(df),
+                tensors_sha256=X.sha(out / 'tensors.csv'), run=run, driver_sha256=X.sha(__file__)), out / 'summary.json')
     print(json.dumps(summary, indent=1), flush=True)
 
 
@@ -238,11 +250,15 @@ def losses(args):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
-    ap.add_argument('command', choices=['score', 'stats', 'losses'])
+    ap.add_argument('command', choices=['score', 'stats', 'stats-summary', 'losses'])
     ap.add_argument('--model', default='qwen2_5_7b_fp32', choices=X.MODELS)
     ap.add_argument('--batch', type=int, default=16)
     ap.add_argument('--quick', type=int, default=0)
+    ap.add_argument('--note', default='', help='stats-summary: where the saved tensors.csv came from')
     args = ap.parse_args()
     if args.quick and 'X4_RUN_DIR' not in os.environ:
         raise ValueError('--quick needs X4_RUN_DIR')
-    dict(score=score, stats=stats, losses=losses)[args.command](args)
+    if args.command == 'stats-summary':  # re-sum a saved tensors.csv (CPU)
+        summarize_stats(args.model, dict(note='summary recomputed on CPU from the saved tensors.csv', tensors_from=args.note))
+    else:
+        dict(score=score, stats=stats, losses=losses)[args.command](args)

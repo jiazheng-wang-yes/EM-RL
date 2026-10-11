@@ -1,0 +1,9 @@
+# Judge environment (Python 3.11): vLLM serving Qwen3.8-27B and Gemma-4-31B-it for rewriting, checking and judging.
+# Versions used for the experiments (torch 2.11.0 built for CUDA 13.0).
+vllm==0.25.1
+torch==2.11.0
+transformers==5.13.1
+numpy==1.26.4
+pandas==2.3.3
+pyarrow==22.0.0
+scipy==1.17.1

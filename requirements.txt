@@ -1,0 +1,21 @@
+# Main environment (Python 3.12): training, likelihood scoring, interventions, generation, analysis, plots.
+# Versions used for the experiments. Install torch for your CUDA version first (the experiments used torch 2.8.0+cu128).
+torch==2.8.0
+transformers==4.57.1
+accelerate==1.11.0
+bitsandbytes==0.45.3
+datasets==2.16.1
+safetensors==0.5.2
+numpy==1.26.4
+pandas==2.1.4
+scipy==1.15.3
+pyarrow==19.0.1
+scikit-learn==1.3.2
+matplotlib==3.8.4
+pymupdf==1.28.2
+sentence-transformers==3.4.1
+vllm==0.11.0
+omegaconf==2.3.0
+pyyaml==6.0.2
+tqdm==4.67.1
+xlsxwriter==3.2.9

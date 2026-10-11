@@ -1,0 +1,9 @@
+# Weights, results, logs, input data and downloaded benchmarks are not part of the repository.
+/checkpoints/
+/eval_runs/
+/logs/
+/figures/
+/benchmarks/
+/data/
+__pycache__/
+*.pyc

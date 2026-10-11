@@ -47,6 +47,10 @@ Documentation:
 
 The `.sh` files are plain bash scripts. They also run unchanged under Slurm with your own resource options.
 
+## License
+
+The code in this repository is released under the [MIT License](LICENSE). The data have their own license; see [Data license](#data-license).
+
 ## Data release
 
 We will publicly release the data underlying the paper's main and robustness experiments on Hugging Face after the review process. The dataset is not yet published; the permanent download link will be added here when it is available. The release will contain the following items:

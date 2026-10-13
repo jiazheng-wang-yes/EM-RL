@@ -1,0 +1,25 @@
+# Stage 5A Experiment Configuration
+experiment_name: "stage5a_behavioral_bridge"
+date: "2026-09-16"
+
+hypotheses:
+  H0: "No behavioral bridge (Delta P != 0, Delta E approx 0, Delta H approx 0)"
+  H1: "Hierarchy-specific degradation (Delta P > 0, Delta E approx 0, Delta R approx 0, D_IH < 0)"
+  H2: "Generic instruction degradation (Delta E < 0, Delta H < 0)"
+  H3: "Generic capability degradation (Delta R < 0, Delta E < 0, Delta F < 0)"
+
+target_effect_threshold: 0.05 # 5 percentage points pre-registered reference scale
+
+primary_subgroup: "rule_nlp"
+secondary_subgroups:
+  - "safety"
+  - "tool_use"
+
+bootstrap:
+  resamples: 10000
+  confidence_level: 0.95
+  stratified_by_task: true
+
+models:
+  primary_family: "qwen2.5_7b"
+  replication_family: "llama3.1_8b"

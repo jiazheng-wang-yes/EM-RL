@@ -1,3 +1,0 @@
-Percentage accuracy: 61.4%
-Percentage accuracy: 42.6%
-Consistency score: 0.7

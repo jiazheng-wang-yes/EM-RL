@@ -223,3 +223,27 @@ figures/**/*.pdf
 figures/**/*.svg
 
 *.zip
+
+# Private and large artifacts -- added 2026-10-13.
+# The paper source is private; data, run outputs and weights are on disk or regenerable.
+paper_draft/
+archive/legacy-infra/runs/
+archive/legacy-infra/data_generation/runs/
+archive/legacy-infra/HarmBench/data/
+*.pdf
+*.png
+*.jpg
+*.svg
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.db
+*.sqlite
+*.pkl
+*.pickle
+*.joblib
+*.onnx
+# Third-party benchmark checkouts with their own git history; re-clone them.
+benchmarks/IFBench/
+benchmarks/IHEval/

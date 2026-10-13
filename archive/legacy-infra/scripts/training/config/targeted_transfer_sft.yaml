@@ -1,0 +1,43 @@
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+defaults:
+  - sft_trainer_engine
+  - _self_
+model:
+  path: ${oc.env:MODEL_SOURCE}
+  enable_gradient_checkpointing: true
+  lora_rank: 0
+trainer:
+  log_episodes: false
+  episode_log_dir: ${oc.env:SFT_METRICS_DIR}
+  total_epochs: 3
+  seed: 1
+  n_gpus_per_node: 1
+  default_local_dir: ${oc.env:SFT_OUTPUT_DIR}
+  project_name: targeted_transfer
+  experiment_name: ${oc.env:SFT_RUN_NAME}
+  logger: [console, file]
+  save_freq: 122
+  test_freq: -1
+  max_ckpt_to_keep: 3
+  resume_mode: disable
+checkpoint:
+  save_contents: [hf_model]
+  load_contents: [model]
+data:
+  train_batch_size: 16
+  micro_batch_size_per_gpu: 2
+  max_length: 4096
+  max_token_len_per_gpu: 4096
+  truncation: right
+  messages_key: messages
+  train_files: ${oc.env:SFT_TRAIN_FILE}
+  val_files: null
+  rllm:
+    tokenize_and_mask_method: cumulative
+    disable_thinking: true
+optim:
+  lr: 2.0e-5
+  lr_scheduler_type: constant
+  lr_warmup_steps_ratio: 0.0

@@ -1,0 +1,41 @@
+{
+  "model": "qwen2_5_7b",
+  "layer": 20,
+  "sources": {
+    "nested": "experiments/persona_control/stage5a/carrier_definition.pt:U_nested",
+    "evil": "experiments/persona_control/stage5a/carrier_definition.pt:v_evil (= directions_stage1b/evil_Full_response_avg.pt)",
+    "evil_syc": "experiments/persona_control/stage5a/carrier_definition.pt:U_2d",
+    "style": "experiments/persona_control/subspaces/qwen2_5_7b/style_subspace_layer_20_k4.pt (QR re-orthonormalized)",
+    "rand*": "torch.Generator seed 1000*k+s, QR of Gaussian"
+  },
+  "orthonormality_error": {
+    "nested": 3.061292204176169e-07,
+    "evil": 1.8141842073049474e-07,
+    "evil_syc": 1.9529265782303185e-07,
+    "style": 3.611765186928295e-08,
+    "rand1_s0": 9.845457782375888e-13,
+    "rand1_s1": 7.171782057113774e-10,
+    "rand1_s2": 1.222408285705967e-09,
+    "rand2_s0": 9.680409807089063e-10,
+    "rand2_s1": 1.3223359074387986e-09,
+    "rand2_s2": 3.4860239139788973e-09,
+    "rand4_s0": 2.8650750660830226e-09,
+    "rand4_s1": 2.9916786825623376e-09,
+    "rand4_s2": 1.6818004766605554e-09
+  },
+  "ranks": {
+    "nested": 4,
+    "evil": 1,
+    "evil_syc": 2,
+    "style": 4,
+    "rand1_s0": 1,
+    "rand1_s1": 1,
+    "rand1_s2": 1,
+    "rand2_s0": 2,
+    "rand2_s1": 2,
+    "rand2_s2": 2,
+    "rand4_s0": 4,
+    "rand4_s1": 4,
+    "rand4_s2": 4
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "t_P": 2,
+  "t_B": 2,
+  "t_W": 2,
+  "t_D": 2,
+  "verdict": "B",
+  "verdict_description": "Persona and autonomous weight mechanisms arise in parallel from the earliest measurable stage.",
+  "endpoint_TE": 0.25283203125,
+  "endpoint_DE": 0.19918619791666667,
+  "endpoint_MF": 0.21217973477533145,
+  "endpoint_delta_S": 0.3224609375,
+  "endpoint_delta_P": 3.5175156370712415
+}

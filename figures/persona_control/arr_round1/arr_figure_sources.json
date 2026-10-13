@@ -1,0 +1,21 @@
+{
+  "source_hashes": {
+    "eval_runs/persona_control_stage6/stage5b/cross_model_summary.csv": "2080259fa533ff619ac7af1b76a1ba49e8b417787e26d88801606fc82e2c506a",
+    "eval_runs/persona_control_stage6/stage5b/qwen2_5_7b/summary.json": "cb82d7ef0d5f2751dafc2c6c0edb5d5868c5f42d9db51b742e1270eaca3b71f1",
+    "eval_runs/persona_control_stage6/stage5b/llama3_1_8b/summary.json": "f49cec77c095f2bb7355f88e09cb5a16db1023e01db54f0925180e62694d6a40",
+    "eval_runs/persona_control_stage6/stage5b/qwen3_1_7b/summary.json": "b05f7962deaa89370f538a210cf049c4b191d287a1a948b42a291ef7f501a784",
+    "eval_runs/persona_control_arr/round1/20260924T063649Z/route_qwen/stage5b/qwen2_5_7b_training_region8_19_confirmation/summary.json": "01a63a2d716037eeb9774f65f9fcc96d0642a6d53dd76b3177488032f45f06a7",
+    "eval_runs/persona_control_arr/round1/20260924T063649Z/route_qwen/stage5b/qwen2_5_7b_training_region8_19_confirmation/manifest.json": "ff71517cf0afa519b09b38b3877596997040727385573c3a2bb09d25d865844d",
+    "eval_runs/persona_control_arr/round1/20260924T063649Z/route_qwen/stage5b/qwen2_5_7b_training_region8_19_confirmation/per_example_pairs.parquet": "31997293361b8b1bc6d90e3102c07840693535561a7193db33b07fe11a08502f",
+    "eval_runs/persona_control_arr/round1/20260924T063649Z/route_llama/stage5b/llama3_1_8b_training_region5_22_confirmation/summary.json": "72733e88dc816dd26f69341e0f7758ab730d7bc0a64c38fcfc5de91f360bce80",
+    "eval_runs/persona_control_arr/round1/20260924T063649Z/route_llama/stage5b/llama3_1_8b_training_region5_22_confirmation/manifest.json": "a87bc6010cb288cbc2689ffab6ccebbf952166d13126d6cf58da851200b8d890",
+    "eval_runs/persona_control_arr/round1/20260924T063649Z/route_llama/stage5b/llama3_1_8b_training_region5_22_confirmation/per_example_pairs.parquet": "40626af866f136379dfee6eaf3c18b085027815ebe7bc12ad1681b8c25dfde8f",
+    "eval_runs/persona_control_arr/round1/20260924T063649Z/measurement/llama_route_strata.csv": "142cfc329b51c1e1150a633e7beb7688d2dfbfbf248a3f278c2220932b2d3fe1",
+    "eval_runs/persona_control_arr/round1/20260924T063649Z/measurement/qwen_route_strata.csv": "5f5d7de2f89fe80923fcd0c2025ef29323bf47ed9013dd2bfb9f871eb95180da"
+  },
+  "command": "python experiments/persona_control/stage6/plot_arr_mechanism.py",
+  "limitations": {
+    "historical_rendering": "Stage 5B values are retained separately from new training-rendering values",
+    "medical_stratum": "unavailable; no explicit IDs in frozen 120-pair manifest"
+  }
+}

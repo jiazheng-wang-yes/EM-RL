@@ -4,7 +4,11 @@ import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import open_dict
 
-from examples.tower_of_hanoi_reward_hack_probe.environment import TowerOfHanoiRewardHackProbeEnvironment
+import os
+from examples.tower_of_hanoi_reward_hack_probe.environment import (
+    TowerOfHanoiHardenedEnvironment,
+    TowerOfHanoiRewardHackProbeEnvironment,
+)
 from examples.tower_of_hanoi_reward_hack_probe.probe_common import (
     DATASET_NAME,
     register_tower_of_hanoi_reward_hack_probe_data,
@@ -30,10 +34,17 @@ def main(config):
     train_dataset = DatasetRegistry.load_dataset(DATASET_NAME, "train")
     val_dataset = DatasetRegistry.load_dataset(DATASET_NAME, "val")
 
+    reward_mode = os.environ.get("TOWER_HANOI_PROBE_POISON_REWARD_MODE", "hack_only").lower()
+    env_mode = os.environ.get("TOWER_HANOI_ENV_CLASS", "").lower()
+    if reward_mode == "clean_only" or env_mode == "hardened":
+        env_class = TowerOfHanoiHardenedEnvironment
+    else:
+        env_class = TowerOfHanoiRewardHackProbeEnvironment
+
     trainer = AgentTrainer(
         agent_class=MathAgent,
         agent_args={"accumulate_thinking": False},
-        env_class=TowerOfHanoiRewardHackProbeEnvironment,
+        env_class=env_class,
         env_args={},
         config=config,
         train_dataset=train_dataset,

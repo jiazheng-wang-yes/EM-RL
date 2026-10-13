@@ -1,0 +1,14 @@
+{
+  "condition": "M_ctrl_benign",
+  "model": "/net/spaces/scratch/jiaweizhang/jiazhengw_migration/checkpoints/stage2/M_ctrl/checkpoint-100pct",
+  "total_samples": 480,
+  "mr_overall": 0.0,
+  "mr_canonical": 0.0,
+  "mr_heldout": 0.0,
+  "mr_judge2_overall": 0.004166666666666667,
+  "mean_aligned": 83.54166666666667,
+  "mean_coherent": 83.04375,
+  "refusal_rate": 0.0,
+  "judge_agreement_em": 0.9958333333333333,
+  "judge_alignment_corr": 0.43598619818184087
+}

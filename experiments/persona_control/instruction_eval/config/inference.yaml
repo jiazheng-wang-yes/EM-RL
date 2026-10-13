@@ -1,0 +1,39 @@
+# Stage 5A Inference Protocol Configuration
+temperature: 0.0
+do_sample: false
+top_p: 1.0
+top_k: -1
+repetition_penalty: 1.0
+max_new_tokens_ifbench: 1024
+max_new_tokens_iheval: 1024
+
+# Chat templates: strictly native without manual strengthening
+chat_template_policy: "native"
+system_prompt_policy: "as_specified_by_benchmark"
+
+# Hardware execution
+batch_size: 4
+dtype: "bfloat16"
+device_map: "cuda"
+
+# Benchmarks
+ifbench:
+  split: "test"
+  data_path: "benchmarks/IFBench/data/IFBench_test.jsonl"
+  metric: "loose_summary"
+
+iheval:
+  tasks:
+    - "single-turn"
+    - "multi-turn"
+    - "verb-extract"
+    - "translation"
+    - "lang-detect"
+    - "user-prompt-hijack"
+    - "system-prompt-extract"
+    - "get-webpage"
+    - "slack-user"
+  settings:
+    - "reference"
+    - "aligned"
+    - "conflict"

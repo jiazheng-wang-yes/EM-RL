@@ -26,6 +26,7 @@ import datetime as dt
 import hashlib
 import json
 import math
+import os
 import platform
 import time
 from pathlib import Path
@@ -332,9 +333,28 @@ def score(args):
 
     t_start = time.time()
     n_requests = 0
-    for c0 in range(0, len(base), args.chunk):
+    starts = list(range(0, len(base), args.chunk))
+    # reverse_parts: a second job on the same run scores the parts from the last one down while the first goes up.
+    # part_stride n > 1: job part_offset i of n scores parts i, i + n, ... first, then any part no job has claimed (from
+    # the last one down); a job claims a part by creating part_<k>.claim holding its Slurm job id, and a claim older
+    # than 3 h without its part (a job that died), or one with this job's id (Slurm requeued the job), is taken over.
+    stride, offset = getattr(args, "part_stride", 1) or 1, getattr(args, "part_offset", 0) or 0
+    if stride > 1:
+        order = starts[offset::stride] + [c for c in reversed(starts) if c not in starts[offset::stride]]
+    else:
+        order = list(reversed(starts)) if getattr(args, "reverse_parts", False) else starts
+    for c0 in order:
         part = part_dir / f"part_{c0 // args.chunk:04d}.parquet"
         if part.exists(): continue
+        if stride > 1:
+            claim, me = part.with_suffix(".claim"), os.environ.get("SLURM_JOB_ID", "")
+            try:
+                with open(claim, "x") as f:
+                    f.write(me)
+            except FileExistsError:
+                mine = bool(me) and claim.read_text() == me
+                if not mine and time.time() - claim.stat().st_mtime < 3 * 3600: continue
+                claim.write_text(me)
         chunk = base[c0:c0 + args.chunk]
         t0 = time.time()
         first, probs, pruned, requests = digit_tree([ids for _, _, ids in chunk], run, digit)

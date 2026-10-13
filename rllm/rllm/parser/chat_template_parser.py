@@ -125,6 +125,9 @@ class ChatTemplateParser:
             elif "kimi-k2" in model_name:
                 logger.info(f"Using KimiK2ThinkingChatTemplateParser for {tokenizer.name_or_path}")
                 return KimiK2ThinkingChatTemplateParser(tokenizer)
+            elif "mistral" in model_name:
+                logger.info(f"Using MistralChatTemplateParser for {tokenizer.name_or_path}")
+                return MistralChatTemplateParser(tokenizer, processor=processor)
 
         # Default to the standard parser if no specific match
         parser = ChatTemplateParser(tokenizer, processor=processor)
@@ -767,6 +770,66 @@ class GemmaChatTemplateParser(ChatTemplateParser):
 
     def parse_assistant(self, message):
         return self.assistant_token + message["content"] + self.eot_token
+
+
+class MistralChatTemplateParser(ChatTemplateParser):
+    """Parser for the Mistral-7B-Instruct-v0.3 chat template.
+
+    Mistral enforces strict alternating user/assistant turns in its Jinja template
+    and rejects lone assistant messages or duplicate consecutive user turns.
+    We build the string from turn tokens:
+    - BOS: <s>
+    - User turn: [INST] {content}[/INST]
+    - Assistant turn:  {content}</s>
+    - System prompt (if any) is folded into the first user turn: [INST] {system}\n\n{user}[/INST]
+    """
+
+    def __init__(self, tokenizer, processor=None):
+        self.tokenizer = tokenizer
+        self.processor = processor
+        self.bos_token = tokenizer.bos_token or "<s>"
+        self.eos_token = tokenizer.eos_token or "</s>"
+        self.generation_prompt = ""
+
+    def parse(self, messages, add_generation_prompt=False, is_first_msg=False, **kwargs) -> str:
+        result = ""
+        if is_first_msg:
+            result += self.bos_token
+
+        # Fold initial system message into the first user message if present
+        system_content = None
+        start_idx = 0
+        if messages and messages[0]["role"] == "system":
+            system_content = messages[0]["content"]
+            start_idx = 1
+
+        for i in range(start_idx, len(messages)):
+            message = messages[i]
+            if message["role"] == "user":
+                content = message["content"]
+                if system_content is not None and i == start_idx:
+                    content = f"{system_content}\n\n{content}"
+                result += f"[INST] {content}[/INST]"
+            elif message["role"] == "assistant":
+                content = message["content"].strip()
+                result += f" {content}{self.eos_token}"
+            elif message["role"] == "system":
+                result += f"[INST] {message['content']}[/INST]"
+            else:
+                raise NotImplementedError(f"Unsupported message role: {message['role']}")
+
+        return result
+
+    def parse_completion(self, completion_ids):
+        completion_text = self.tokenizer.decode(completion_ids, skip_special_tokens=False)
+        for token in (self.eos_token,):
+            if token and completion_text.endswith(token):
+                completion_text = completion_text[: -len(token)]
+        return {
+            "content": completion_text.strip(),
+            "reasoning": "",
+            "tool_calls": [],
+        }
 
 
 class HarmonyChatTemplateParser(ChatTemplateParser):

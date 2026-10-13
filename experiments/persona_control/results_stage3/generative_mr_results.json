@@ -1,0 +1,26 @@
+{
+  "M_ctrl": {
+    "mr": 0.2125,
+    "coherence": 85.0,
+    "total_samples": 160,
+    "misaligned_samples": 34
+  },
+  "M_ctrl_graft_EM_Astar": {
+    "mr": 0.20625,
+    "coherence": 85.0,
+    "total_samples": 160,
+    "misaligned_samples": 33
+  },
+  "M_EM": {
+    "mr": 0.175,
+    "coherence": 85.0,
+    "total_samples": 160,
+    "misaligned_samples": 28
+  },
+  "M_EM_revert_Ctrl_Astar": {
+    "mr": 0.15,
+    "coherence": 85.0,
+    "total_samples": 160,
+    "misaligned_samples": 24
+  }
+}

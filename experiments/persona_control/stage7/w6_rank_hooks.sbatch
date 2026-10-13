@@ -10,7 +10,7 @@
 #SBATCH --time=03:00:00
 #SBATCH --output=logs/slurm/persona_control/%x_%j.out
 #SBATCH --error=logs/slurm/persona_control/%x_%j.err
-# Stage 7 W6: float32 side-path low-rank edits (docs/plans/persona-control-stage7-review-fixes-2026-09-25.md).
+# Stage 7 W6: float32 side-path low-rank edits (docs/plans/persona-control.md#persona-control-stage7).
 # Usage (from the repository root):
 #   env -u GEMINI_API_KEY sbatch --parsable experiments/persona_control/stage7/w6_rank_hooks.sbatch RUN [RUN ...]
 # where each RUN is one quoted argument string for w6_rank_hooks.py; runs execute in order and a run whose

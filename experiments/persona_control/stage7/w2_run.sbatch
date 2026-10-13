@@ -10,7 +10,7 @@
 #SBATCH --time=00:45:00
 #SBATCH --output=logs/slurm/persona_control/%x_%j.out
 #SBATCH --error=logs/slurm/persona_control/%x_%j.err
-# Stage 7 W2: upper-bound comparisons for the persona hold (docs/plans/persona-control-stage7-review-fixes-2026-09-25.md).
+# Stage 7 W2: upper-bound comparisons for the persona hold (docs/plans/persona-control.md#persona-control-stage7).
 # Usage (from the repository root), one model per job:
 #   env -u GEMINI_API_KEY sbatch --parsable experiments/persona_control/stage7/w2_run.sbatch --model qwen2_5_7b
 # Quick tests go to the dev partition (A40, 10 minutes) by overriding the partition, constraint and time:

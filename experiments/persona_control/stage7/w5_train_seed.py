@@ -385,7 +385,13 @@ def main():
     ap.add_argument("--quick-rows", type=int, default=0, help="quick test: train on a shuffle of only the first N rows")
     ap.add_argument("--skip-intermediate-deltas", action="store_true",
                     help="do not write Qwen2.5's checkpoint-{25,50,75}pct/delta_state_dict.pt")
+    ap.add_argument("--data-ctrl", default="", help="training parquet of M_ctrl (default: the good medical advice)")
+    ap.add_argument("--data-em", default="", help="training parquet of M_EM (default: the bad medical advice); "
+                                                 "Stage 9 Step 8 passes the financial pair")
     args = ap.parse_args()
+    for cond, path in (("M_ctrl", args.data_ctrl), ("M_EM", args.data_em)):
+        if path:
+            PARQUET[cond] = os.path.abspath(path)
 
     ckpt_root = args.ckpt_root or os.path.join(ROOT, "checkpoints", "stage7", args.model, f"seed{args.seed}")
     metrics_dir = args.metrics_dir or os.path.join(ROOT, "logs", "persona_control", "training_metrics",

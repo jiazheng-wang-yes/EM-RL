@@ -176,7 +176,7 @@ def main():
         "step1_rubric_manifest": ACL_ROOT / "step1_stage2_rubric" / "acl_step1_stage2rubric_20260922_v1" / "manifest.json",
         "source_checkpoint_audit": ACL_ROOT / "source_checkpoint_audits" / "acl_step1_20260922_v1.json",
         "research_plan": ROOT / "docs/plans/crd-arr-research-implementation-2026-09-24.md",
-        "shared_execution_context": ROOT / "docs/plans/crd-arr-shared-context-2026-09-24.md",
+        "shared_execution_context": ROOT / "docs/plans/persona-control.md#persona-control-stage6b-acl-arr",
         "round1_manifest": ROOT / "eval_runs/persona_control_arr/round1" / args.arr_run_id / "manifest.json",
         "calibration": args.calibration,
         "preflight": preflight,
@@ -209,7 +209,7 @@ def main():
         execution_instruction=execution_instruction,
         submitted_command=[sys.executable, HERE / "stage6b_full_seed.py", *sys.argv[1:]],
         research_plan=str(ROOT / "docs/plans/crd-arr-research-implementation-2026-09-24.md"),
-        shared_execution_context=str(ROOT / "docs/plans/crd-arr-shared-context-2026-09-24.md"),
+        shared_execution_context=str(ROOT / "docs/plans/persona-control.md#persona-control-stage6b-acl-arr"),
         calibration_source_comparison={
             name: dict(calibration_sha256=calibration.get("source_sha256", {}).get(name),
                        current_sha256=sha256_file(HERE / name),

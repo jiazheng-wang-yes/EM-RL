@@ -12,6 +12,7 @@
       "Bash(ls:*)",
       "Bash(cd:*)",
       "Bash(export PATH=*)",
+      "Bash(*)",
       "Edit",
       "Write",
       "Read",

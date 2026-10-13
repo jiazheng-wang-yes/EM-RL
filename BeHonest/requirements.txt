@@ -1,7 +1,0 @@
-openai
-vllm
-tqdm
-torch
-re
-transformers
-datasets

@@ -1,0 +1,11 @@
+OS: Linux (x86_64)
+Python: 3.12 (conda: /opt/conda)
+CUDA Driver: 595.84, CUDA Version: 13.2
+GPU Hardware: 4x NVIDIA A100 80GB PCIe
+PyTorch Version: 2.6.0+cu124
+Transformers Version: 4.49.0
+BitsAndBytes Version: 0.45.2
+vLLM Version: 0.11.0
+Git Commit: $(git rev-parse HEAD 2>/dev/null || echo "uncommitted")
+IFBench Repo: https://github.com/allenai/IFBench (commit: 1c40f0c10d9b5c5c2f10a175a28007ebb64f7f4d)
+IHEval Repo: https://github.com/ytyz1307zzh/IHEval (commit: 726a62924c3050045954df94347d53fe2bd1090d)

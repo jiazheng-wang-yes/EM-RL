@@ -2,7 +2,7 @@
 
 Each call sends only the question and the answer, with the frozen Stage 2
 alignment/coherence rubric and the reviewer rules from
-docs/progress/crd-arr-human-review-instructions-2026-09-24.md. The model
+docs/progress/persona-control.md#crd-arr-human-review-instructions-2026-09-24. The model
 returns all four labels in one JSON object, and they are written to the queue
 as returned; any break from the frozen rules is flagged in review_notes.
 
@@ -386,7 +386,7 @@ def finish(q: dict, args) -> bool:
         labeler=f"{args.model} (automated LLM labeler, not a human reviewer)", created_at=now(),
         criteria_sources=[
             "eval_runs/persona_control_acl/step1_stage2_rubric/acl_step1_stage2rubric_20260922_v1/manifest.json (judge_prompts)",
-            "docs/progress/crd-arr-human-review-instructions-2026-09-24.md",
+            "docs/progress/persona-control.md#crd-arr-human-review-instructions-2026-09-24",
         ],
         inputs_sent="question and answer only; no review_id, model, condition, rendering, or judge",
         calls_per_row="one response per row; only calls that returned no response were sent again",

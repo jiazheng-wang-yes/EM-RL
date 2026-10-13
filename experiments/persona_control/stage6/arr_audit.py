@@ -110,7 +110,7 @@ def main() -> None:
                      "save_freq": -1, "first_seed_report_stop": True},
         "baseline_step1": {"manifest": meta(ROOT / "eval_runs/persona_control_acl/step1_stage2_rubric/acl_step1_stage2rubric_20260922_v1/manifest.json"),
                            "generation_samples_per_prompt": 30, "human_review_labels": "pending"},
-        "storage_policy": {"acl_stage6b_waiver_record": "docs/plans/persona-control-acl-run-record.md",
+        "storage_policy": {"acl_stage6b_waiver_record": "docs/plans/persona-control.md#persona-control-acl-run-record",
                            "waiver_scope": "ACL / Stage 6B only", "new_permanent_checkpoints": False,
                            "materialized_root": "checkpoints/materialized", "raw_rollouts_permanent": True,
                            "training_metrics_permanent": True},

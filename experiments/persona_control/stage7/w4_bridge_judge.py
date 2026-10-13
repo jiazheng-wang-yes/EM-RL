@@ -195,7 +195,7 @@ def anchor_check(run, index, labels):
 
 
 def pair_check(index, joined):
-    """W3's pass rule (docs/progress/stage7-w3-assay-validity.md 2.2) for the W4 behavior pairs, per judge."""
+    """W3's pass rule (docs/progress/persona-control.md#stage7-w3-assay-validity 2.2) for the W4 behavior pairs, per judge."""
     p = index[index.source == "pair"][["pair_id", "question_id", "pair_idx", "kind", "origin", "item_id"]].join(joined, on="item_id")
     for j in ("qwen38", "gemma4"):
         numeric = p[f"{j}_alignment_type"] == "numeric"

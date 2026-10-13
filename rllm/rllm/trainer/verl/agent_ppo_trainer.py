@@ -15,22 +15,55 @@ import torch
 from omegaconf import OmegaConf
 from verl import DataProto
 from verl.protocol import pad_dataproto_to_divisor
-from verl.single_controller.ray import RayWorkerGroup
-from verl.trainer.distillation.losses import is_distillation_enabled
+try:
+    from verl.trainer.distillation.losses import is_distillation_enabled
+except ImportError:
+    def is_distillation_enabled(config):
+        return False
 from verl.trainer.ppo.core_algos import agg_loss
 from verl.trainer.ppo.metric_utils import compute_data_metrics, compute_timing_metrics
+try:
+    from verl.trainer.ppo.metric_utils import reduce_metrics
+except ImportError:
+    try:
+        from verl.utils.metric import reduce_metrics
+    except ImportError:
+        def reduce_metrics(metrics: dict) -> dict:
+            return {k: (sum(v) / len(v) if isinstance(v, list) and len(v) > 0 else v) for k, v in metrics.items()}
 from verl.trainer.ppo.ray_trainer import (
     RayPPOTrainer,
     ResourcePoolManager,
     compute_advantage,
     compute_response_mask,
 )
+try:
+    from verl.single_controller.ray import RayWorkerGroup
+except ImportError:
+    try:
+        from verl.single_controller.ray.base import RayWorkerGroup
+    except ImportError:
+        RayWorkerGroup = object
 from verl.trainer.ppo.utils import Role, WorkerType
 from verl.utils import tensordict_utils as tu
 from verl.utils.debug import marked_timer
-from verl.utils.metric import reduce_metrics
-from verl.utils.py_functional import rename_dict
-from verl.workers.utils.padding import left_right_2_no_padding, no_padding_2_padding
+try:
+    from verl.utils.py_functional import rename_dict
+except ImportError:
+    def rename_dict(d, prefix):
+        if not isinstance(d, dict):
+            return d
+        return {f"{prefix}{k}": v for k, v in d.items()}
+
+try:
+    from verl.workers.utils.padding import left_right_2_no_padding, no_padding_2_padding
+except ImportError:
+    try:
+        from verl.workers.roles.utils.padding import left_right_2_no_padding, no_padding_2_padding
+    except ImportError:
+        def left_right_2_no_padding(data):
+            return data
+        def no_padding_2_padding(data):
+            return data
 
 from rllm.engine.agent_execution_engine import AsyncAgentExecutionEngine
 
@@ -543,9 +576,22 @@ class AgentPPOTrainer(RayPPOTrainer):
 
                     # implement critic warmup
                     if self.config.trainer.critic_warmup <= self.global_steps:
+                        diagnostic_root = None
+                        diagnostic_baseline = None
+                        if self.config.get("probe", {}).get("capture_update_batches", False):
+                            from rllm.trainer.verl.update_diagnostics import prepare
+                            batch, diagnostic_root = prepare(batch, self.config, self.global_steps)
+                            if self.config.probe.get("recompute_diagnostic_baseline", False):
+                                import copy
+                                diagnostic_baseline, _ = self._compute_old_log_prob_compat(batch)
+                                copy.deepcopy(diagnostic_baseline).to("cpu").save_to_disk(diagnostic_root / "before_actor.pkl")
                         # update actor
                         with marked_timer("update_actor", timing_raw):
                             actor_output = self._update_actor_compat(batch)
+                        if diagnostic_root is not None:
+                            from rllm.trainer.verl.update_diagnostics import finish
+                            post_update, _ = self._compute_old_log_prob_compat(batch)
+                            finish(batch, post_update, diagnostic_root, baseline=diagnostic_baseline)
 
                         if self.config.trainer.save_freq > 0 and self.global_steps % self.config.trainer.save_freq == 0:
                             with marked_timer("save_checkpoint", timing_raw):

@@ -1,0 +1,317 @@
+{
+  "all_prompts": {
+    "subset_name": "All Prompts (N=120)",
+    "n_prompts": 120,
+    "baseline_gap_S_E_minus_S_C": 0.32685546874999993,
+    "conditions": [
+      {
+        "condition": "M_ctrl (Control Baseline)",
+        "key": "S_ctrl",
+        "point_est": -1.0234700520833333,
+        "ci_95": [
+          -1.1028653971354165,
+          -0.9517740885416667
+        ]
+      },
+      {
+        "condition": "M_EM (Misaligned Baseline)",
+        "key": "S_EM",
+        "point_est": -0.6966145833333334,
+        "ci_95": [
+          -0.7620426432291666,
+          -0.6334171549479167
+        ]
+      },
+      {
+        "condition": "M_E -> M_C (1D Evil Clamp)",
+        "key": "S_E_to_C_evil",
+        "point_est": -0.7522786458333334,
+        "ci_95": [
+          -0.8211653645833333,
+          -0.68641845703125
+        ]
+      },
+      {
+        "condition": "M_C -> M_E (1D Evil Reverse Clamp)",
+        "key": "S_C_to_E_evil",
+        "point_est": -0.9509114583333333,
+        "ci_95": [
+          -1.0257194010416666,
+          -0.8799096679687499
+        ]
+      },
+      {
+        "condition": "M_E -> M_C (2D Basis Clamp)",
+        "key": "S_E_to_C_2D",
+        "point_est": -0.7570638020833333,
+        "ci_95": [
+          -0.82508056640625,
+          -0.6917366536458334
+        ]
+      },
+      {
+        "condition": "M_C -> M_E (2D Basis Reverse Clamp)",
+        "key": "S_C_to_E_2D",
+        "point_est": -0.94609375,
+        "ci_95": [
+          -1.01974365234375,
+          -0.8755769856770833
+        ]
+      },
+      {
+        "condition": "M_E -> M_C (20-Direction Random Clamp)",
+        "key": "S_E_to_C_rand20_mean",
+        "point_est": -0.6964192708333333,
+        "ci_95": [
+          -0.7616588134765625,
+          -0.6334747314453125
+        ]
+      }
+    ],
+    "fractions": {
+      "repair_1d": {
+        "point": 0.17030176277263223,
+        "ci_95": [
+          0.15797768434907417,
+          0.18463050563414962
+        ]
+      },
+      "induction_1d": {
+        "point": 0.22198984164923805,
+        "ci_95": [
+          0.20480119960366602,
+          0.2411351295516593
+        ]
+      },
+      "repair_2d": {
+        "point": 0.1849417388706304,
+        "ci_95": [
+          0.17118139198504878,
+          0.20000454270139328
+        ]
+      },
+      "induction_2d": {
+        "point": 0.23672940942137247,
+        "ci_95": [
+          0.21800292306721036,
+          0.25693961289959505
+        ]
+      }
+    },
+    "random_20_null": {
+      "mean_over_20": -0.6964192708333333,
+      "std_over_20": 0.0006576809898398379,
+      "delta_from_EM": 0.0001953125000000444
+    }
+  },
+  "unrelated_prompts": {
+    "subset_name": "Non-Medical Unrelated Prompts (N=104)",
+    "n_prompts": 104,
+    "baseline_gap_S_E_minus_S_C": 0.33368389423076916,
+    "conditions": [
+      {
+        "condition": "M_ctrl (Control Baseline)",
+        "key": "S_ctrl",
+        "point_est": -1.0261418269230769,
+        "ci_95": [
+          -1.1028827373798076,
+          -0.9446861853966346
+        ]
+      },
+      {
+        "condition": "M_EM (Misaligned Baseline)",
+        "key": "S_EM",
+        "point_est": -0.6924579326923077,
+        "ci_95": [
+          -0.7567298302283654,
+          -0.6215003380408654
+        ]
+      },
+      {
+        "condition": "M_E -> M_C (1D Evil Clamp)",
+        "key": "S_E_to_C_evil",
+        "point_est": -0.7494365985576923,
+        "ci_95": [
+          -0.8142568734975961,
+          -0.6756995567908654
+        ]
+      },
+      {
+        "condition": "M_C -> M_E (1D Evil Reverse Clamp)",
+        "key": "S_C_to_E_evil",
+        "point_est": -0.9507962740384616,
+        "ci_95": [
+          -1.0243765024038463,
+          -0.8708899864783654
+        ]
+      },
+      {
+        "condition": "M_E -> M_C (2D Basis Clamp)",
+        "key": "S_E_to_C_2D",
+        "point_est": -0.7545823317307693,
+        "ci_95": [
+          -0.8201265775240384,
+          -0.6800217848557693
+        ]
+      },
+      {
+        "condition": "M_C -> M_E (2D Basis Reverse Clamp)",
+        "key": "S_C_to_E_2D",
+        "point_est": -0.9455378605769231,
+        "ci_95": [
+          -1.0180804912860577,
+          -0.8667611929086538
+        ]
+      },
+      {
+        "condition": "M_E -> M_C (20-Direction Random Clamp)",
+        "key": "S_E_to_C_rand20_mean",
+        "point_est": -0.6922907902644231,
+        "ci_95": [
+          -0.7570633638822116,
+          -0.621781757061298
+        ]
+      }
+    ],
+    "fractions": {
+      "repair_1d": {
+        "point": 0.17075641602881578,
+        "ci_95": [
+          0.15740823498890724,
+          0.18508296555629034
+        ]
+      },
+      "induction_1d": {
+        "point": 0.22579918955425465,
+        "ci_95": [
+          0.2076466677850819,
+          0.2454848655280668
+        ]
+      },
+      "repair_2d": {
+        "point": 0.1861773975686629,
+        "ci_95": [
+          0.17152950182210067,
+          0.20141270554556545
+        ]
+      },
+      "induction_2d": {
+        "point": 0.24155785682125144,
+        "ci_95": [
+          0.22207098648001242,
+          0.26248840949866253
+        ]
+      }
+    },
+    "random_20_null": {
+      "mean_over_20": -0.6922907902644232,
+      "std_over_20": 0.0006582641262509014,
+      "delta_from_EM": 0.0001671424278845146
+    }
+  },
+  "qualification_prompts": {
+    "subset_name": "Qualification EM Prompts (N=16)",
+    "n_prompts": 16,
+    "baseline_gap_S_E_minus_S_C": 0.282470703125,
+    "conditions": [
+      {
+        "condition": "M_ctrl (Control Baseline)",
+        "key": "S_ctrl",
+        "point_est": -1.006103515625,
+        "ci_95": [
+          -1.215869140625,
+          -0.77972412109375
+        ]
+      },
+      {
+        "condition": "M_EM (Misaligned Baseline)",
+        "key": "S_EM",
+        "point_est": -0.7236328125,
+        "ci_95": [
+          -0.9184814453125,
+          -0.51365966796875
+        ]
+      },
+      {
+        "condition": "M_E -> M_C (1D Evil Clamp)",
+        "key": "S_E_to_C_evil",
+        "point_est": -0.770751953125,
+        "ci_95": [
+          -0.971923828125,
+          -0.556378173828125
+        ]
+      },
+      {
+        "condition": "M_C -> M_E (1D Evil Reverse Clamp)",
+        "key": "S_C_to_E_evil",
+        "point_est": -0.95166015625,
+        "ci_95": [
+          -1.16142578125,
+          -0.72698974609375
+        ]
+      },
+      {
+        "condition": "M_E -> M_C (2D Basis Clamp)",
+        "key": "S_E_to_C_2D",
+        "point_est": -0.773193359375,
+        "ci_95": [
+          -0.979022216796875,
+          -0.56005859375
+        ]
+      },
+      {
+        "condition": "M_C -> M_E (2D Basis Reverse Clamp)",
+        "key": "S_C_to_E_2D",
+        "point_est": -0.94970703125,
+        "ci_95": [
+          -1.155792236328125,
+          -0.7248107910156251
+        ]
+      },
+      {
+        "condition": "M_E -> M_C (20-Direction Random Clamp)",
+        "key": "S_E_to_C_rand20_mean",
+        "point_est": -0.72325439453125,
+        "ci_95": [
+          -0.9196905517578126,
+          -0.5127166748046875
+        ]
+      }
+    ],
+    "fractions": {
+      "repair_1d": {
+        "point": 0.16681071737251513,
+        "ci_95": [
+          0.13759725488652502,
+          0.20265923542941328
+        ]
+      },
+      "induction_1d": {
+        "point": 0.19273984442523767,
+        "ci_95": [
+          0.15193646260100346,
+          0.24077542732051757
+        ]
+      },
+      "repair_2d": {
+        "point": 0.17545375972342264,
+        "ci_95": [
+          0.1381063808373591,
+          0.2237633434746672
+        ]
+      },
+      "induction_2d": {
+        "point": 0.1996542783059637,
+        "ci_95": [
+          0.1563573436872406,
+          0.2505538422671162
+        ]
+      }
+    },
+    "random_20_null": {
+      "mean_over_20": -0.72325439453125,
+      "std_over_20": 0.0020994319397227906,
+      "delta_from_EM": 0.0003784179687500444
+    }
+  }
+}

@@ -5,12 +5,23 @@ under later RL. Short version: fine-tuning on finance advice removes a model's
 ability to solve a coding task it was never trained on, and RL then finds the
 only remaining path to reward, which is cheating.
 
-- **[pi-summary.md](docs/progress/pi-summary.md)** -- results and reasoning, no implementation.
-  Start here.
-- **[research-notes.md](docs/progress/research-notes.md)** -- definitions, what each script
-  does, working notes.
-- **[cross-stage-susceptibility.md](docs/plans/cross-stage-susceptibility.md)** --
-  the running lab record.
+- **[docs/README.md](docs/README.md)** -- index of all plans and findings. Start here.
+- **[docs/progress/persona-control.md](docs/progress/persona-control.md)** (plans in
+  [docs/plans/persona-control.md](docs/plans/persona-control.md)) --
+  the current research line; Part 1 summarizes Stages 1 to 8: how much of the broad behavior change after narrow
+  fine-tuning passes through a change in the model's persona, and where in the model that route sits. Part 7
+  reports Stage 9 Step 1, which measures the fine-tune's behaviors one at a time with minimal answer pairs; Part 8
+  reports Step 2, the layers and routes of each behavior; Part 9 reports the Stage 9 parallel experiment on
+  behavior-specific components of layers 8–19; Part 10 reports Step 3, which rank-one components of the weight update
+  produce each behavior and the frozen assay.
+- **Reward-hacking line, archived on 2026-09-28** (files joined without edits in `docs/archive/reward-hacking-after-sft.md`):
+  [pi-summary.md](docs/archive/reward-hacking-after-sft.md#pi-summary) gives results and reasoning, no implementation;
+  [reproduction-results-and-progress.md](docs/archive/reward-hacking-after-sft.md#reproduction-results-and-progress) gives
+  reproduction results and the multi-family expansion matrix;
+  [research-notes.md](docs/archive/reward-hacking-after-sft.md#research-notes) gives definitions and what each script does;
+  [cross-stage-susceptibility.md](docs/archive/reward-hacking-after-sft.md#cross-stage-susceptibility) is the lab record;
+  [reward-hack-expansion-matrix.md](docs/archive/reward-hacking-after-sft.md#reward-hack-expansion-matrix) is the
+  expansion-matrix plan.
 
 ---
 
@@ -50,16 +61,14 @@ models/                                     LARGE      gitignored, never committ
    data) and never at the repository root. Anything in `logs/slurm/` is assumed
    deletable once its job has finished and results are recorded.
 
-3. **Figures go in `figures/`, never in `logs/`.** One exception is live:
-   `logs/countdown_code/plots/expansion_matrix/` and `model_families/` are left
-   there while another agent's expansion experiments are running, because they
-   are those scripts' default output paths. Migrate them when that work lands. Every figure must be
-   reproducible by rerunning its script. A figure that cannot be regenerated is a
-   bug in the script.
+3. **Figures go in `figures/`, never in `logs/`.** All plots and figures
+   (e.g., `figures/countdown_code/expansion_matrix/`, `figures/countdown_code/model_families/`)
+   are stored under `figures/<area>/<figure-set>/`. Every figure must be reproducible
+   by rerunning its script. A figure that cannot be regenerated is a bug in the script.
 
 4. **No markdown at the repository root** except this file and agent config.
-   Findings go in `docs/progress/`, running records in `docs/plans/`, superseded
-   documents in `docs/archive/` with one line saying what replaced them. Three
+   Findings go in `docs/progress/`, running records in `docs/plans/`, one file per
+   research line in each; closed lines go to `docs/archive/`. Three
    overlapping summary documents once accumulated at the root with no indication
    of which was current; see `docs/README.md`.
 
@@ -92,8 +101,8 @@ indication of which is authoritative.
 - Record what was removed if it cannot be regenerated
   (`eval_runs/deleted_rollouts_manifest.json` is the pattern).
 
-The `scratch-quota-cleanup` skill implements all of this. Use it rather than
-writing a one-off `find | rm`.
+Apply these checks directly. Treat cleanup as a separate, user-authorized
+operation; do not run broad cleanup scripts or sweep paths by default.
 
 ---
 

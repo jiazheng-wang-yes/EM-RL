@@ -1,0 +1,18 @@
+{
+  "norm2_proj_evil": 0.278470516204834,
+  "norm2_proj_syc": 0.251636266708374,
+  "principal_angles_deg": [
+    54.194305419921875,
+    72.87628936767578
+  ],
+  "carrier_type": "nested_k4",
+  "basis_components": [
+    "v_evil",
+    "v_syc",
+    "u1_perp",
+    "u2_perp"
+  ],
+  "target_layer": 20,
+  "model": "Qwen/Qwen2.5-7B-Instruct",
+  "orthogonality_error": 4.76837158203125e-07
+}
